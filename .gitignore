@@ -2,6 +2,9 @@
 # piptouque
 
 # sample directory
+samples/
+# build directory
+build/
 
 # from github/gitignore
 
