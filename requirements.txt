@@ -1,0 +1,6 @@
+
+libxrandx-dev
+libxinerama-dev
+libxcursor-dev
+libxi-dev
+libopengl-dev
