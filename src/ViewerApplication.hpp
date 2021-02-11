@@ -5,6 +5,8 @@
 #include "utils/filesystem.hpp"
 #include "utils/shaders.hpp"
 
+namespace tinygltf { class Model; }
+
 class ViewerApplication
 {
 public:
@@ -16,6 +18,9 @@ public:
   int run();
 
 private:
+  // TD
+  bool loadGltfFile(tinygltf::Model & model) const;
+
   // A range of indices in a vector containing Vertex Array Objects
   struct VaoRange
   {

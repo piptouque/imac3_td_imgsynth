@@ -13,6 +13,25 @@
 #include <stb_image_write.h>
 #include <tiny_gltf.h>
 
+// TD
+bool ViewerApplication::loadGltfFile(tinygltf::Model & model) const {
+  tinygltf::TinyGLTF loader;
+  std::string err, warn;
+  bool success = loader.LoadASCIIFromFile(
+      &model, &err, &warn,
+      m_gltfFilePath.string());
+  if (!err.empty()) {
+    std::cerr << "Error while parsing GLTF file: " << err << std::endl;
+  }
+  if (!warn.empty()) {
+    std::cerr << "Warning while parsing GLTF file: " << warn << std::endl;
+  }
+  if (!success) {
+    std::cerr << "Failed to parse GLTF file at " << m_gltfFilePath << std::endl;
+  }
+  return success;
+}
+
 void keyCallback(
     GLFWwindow *window, int key, [[maybe_unused]] int scancode,
     int action, [[maybe_unused]] int mods)
@@ -21,6 +40,7 @@ void keyCallback(
     glfwSetWindowShouldClose(window, 1);
   }
 }
+
 
 int ViewerApplication::run()
 {
@@ -58,6 +78,10 @@ int ViewerApplication::run()
 
   tinygltf::Model model;
   // TODO Loading the glTF file
+  if (!loadGltfFile(model)) {
+    // no gl object has been allocated, can return safely (?)
+    return 1;
+  }
 
   // TODO Creation of Buffer Objects
 

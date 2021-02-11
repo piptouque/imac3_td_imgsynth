@@ -120,13 +120,12 @@ set(APP gltf-viewer)
 set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
 
 add_library(third-party ${THIRD_PARTY_SRC_FILES})
+
 target_include_directories(
-        # ${APP}
         third-party
         SYSTEM PUBLIC ${THIRD_PARTY_INCLUDE_FILES}
 )
 target_link_libraries(
-        # ${APP}
         third-party
         ${LIBRARIES}
 )
