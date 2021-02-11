@@ -33,7 +33,7 @@ glm::mat4 getLocalToWorldMatrix(
   return node.scale.empty() ? TR
                             : glm::scale(TR, glm::vec3(node.scale[0],
                                                  node.scale[1], node.scale[2]));
-};
+}
 
 void computeSceneBounds(
     const tinygltf::Model &model, glm::vec3 &bboxMin, glm::vec3 &bboxMax)
@@ -46,11 +46,11 @@ void computeSceneBounds(
   if (model.defaultScene >= 0) {
     const std::function<void(int, const glm::mat4 &)> updateBounds =
         [&](int nodeIdx, const glm::mat4 &parentMatrix) {
-          const auto &node = model.nodes[nodeIdx];
+          const auto &node = model.nodes[static_cast<std::size_t>(nodeIdx)];
           const glm::mat4 modelMatrix =
               getLocalToWorldMatrix(node, parentMatrix);
           if (node.mesh >= 0) {
-            const auto &mesh = model.meshes[node.mesh];
+            const auto &mesh = model.meshes[static_cast<std::size_t>(node.mesh)];
             for (size_t pIdx = 0; pIdx < mesh.primitives.size(); ++pIdx) {
               const auto &primitive = mesh.primitives[pIdx];
               const auto positionAttrIdxIt =
@@ -59,29 +59,34 @@ void computeSceneBounds(
                 continue;
               }
               const auto &positionAccessor =
-                  model.accessors[(*positionAttrIdxIt).second];
+                  model.accessors[
+                      static_cast<std::size_t>((*positionAttrIdxIt).second)];
               if (positionAccessor.type != 3) {
                 std::cerr << "Position accessor with type != VEC3, skipping"
                           << std::endl;
                 continue;
               }
               const auto &positionBufferView =
-                  model.bufferViews[positionAccessor.bufferView];
+                  model.bufferViews[
+                      static_cast<std::size_t>(positionAccessor.bufferView)];
               const auto byteOffset =
                   positionAccessor.byteOffset + positionBufferView.byteOffset;
               const auto &positionBuffer =
-                  model.buffers[positionBufferView.buffer];
+                  model.buffers[
+                      static_cast<std::size_t>(positionBufferView.buffer)];
               const auto positionByteStride =
                   positionBufferView.byteStride ? positionBufferView.byteStride
                                                 : 3 * sizeof(float);
 
               if (primitive.indices >= 0) {
-                const auto &indexAccessor = model.accessors[primitive.indices];
+                const auto &indexAccessor =
+                  model.accessors[static_cast<std::size_t>(primitive.indices)];
                 const auto &indexBufferView =
-                    model.bufferViews[indexAccessor.bufferView];
+                    model.bufferViews[static_cast<std::size_t>(indexAccessor.bufferView)];
                 const auto indexByteOffset =
                     indexAccessor.byteOffset + indexBufferView.byteOffset;
-                const auto &indexBuffer = model.buffers[indexBufferView.buffer];
+                const auto &indexBuffer =
+                    model.buffers[static_cast<std::size_t>(indexBufferView.buffer)];
                 auto indexByteStride = indexBufferView.byteStride;
 
                 switch (indexAccessor.componentType) {
@@ -109,21 +114,21 @@ void computeSceneBounds(
                   uint32_t index = 0;
                   switch (indexAccessor.componentType) {
                   case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                    index = *((const uint8_t *)&indexBuffer
-                                  .data[indexByteOffset + indexByteStride * i]);
+                    index = *(reinterpret_cast<const uint8_t *>(&indexBuffer
+                                  .data[indexByteOffset + indexByteStride * i]));
                     break;
                   case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                    index = *((const uint16_t *)&indexBuffer
-                                  .data[indexByteOffset + indexByteStride * i]);
+                    index = *(reinterpret_cast<const uint16_t *>(&indexBuffer
+                                  .data[indexByteOffset + indexByteStride * i]));
                     break;
                   case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                    index = *((const uint32_t *)&indexBuffer
-                                  .data[indexByteOffset + indexByteStride * i]);
+                    index = *(reinterpret_cast<const uint32_t *>(&indexBuffer
+                                  .data[indexByteOffset + indexByteStride * i]));
                     break;
                   }
                   const auto &localPosition =
-                      *((const glm::vec3 *)&positionBuffer
-                              .data[byteOffset + positionByteStride * index]);
+                      *(reinterpret_cast<const glm::vec3 *>(&positionBuffer
+                              .data[byteOffset + positionByteStride * index]));
                   const auto worldPosition =
                       glm::vec3(modelMatrix * glm::vec4(localPosition, 1.f));
                   bboxMin = glm::min(bboxMin, worldPosition);
@@ -132,8 +137,8 @@ void computeSceneBounds(
               } else {
                 for (size_t i = 0; i < positionAccessor.count; ++i) {
                   const auto &localPosition =
-                      *((const glm::vec3 *)&positionBuffer
-                              .data[byteOffset + positionByteStride * i]);
+                      *(reinterpret_cast<const glm::vec3 *>(&positionBuffer
+                              .data[byteOffset + positionByteStride * i]));
                   const auto worldPosition =
                       glm::vec3(modelMatrix * glm::vec4(localPosition, 1.f));
                   bboxMin = glm::min(bboxMin, worldPosition);
@@ -146,7 +151,7 @@ void computeSceneBounds(
             updateBounds(childNodeIdx, modelMatrix);
           }
         };
-    for (const auto nodeIdx : model.scenes[model.defaultScene].nodes) {
+    for (const auto nodeIdx : model.scenes[static_cast<std::size_t>(model.defaultScene)].nodes) {
       updateBounds(nodeIdx, glm::mat4(1));
     }
   }

@@ -59,7 +59,7 @@ void renderToImage(size_t width, size_t height, size_t numComponents,
 
   GLint currentlyBoundFBO = 0;
   glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &currentlyBoundFBO);
-  if (currentlyBoundFBO != framebufferObject) {
+  if (currentlyBoundFBO != static_cast<GLint>(framebufferObject)) {
     // Display a warning on clog
     // It may not be an error because the drawScene() function might have render
     // to the framebuffer but unbound it after.

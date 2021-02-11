@@ -3,11 +3,8 @@ cmake_policy(SET CMP0048 NEW)
 
 project(gltf-viewer VERSION 0.0.1)
 
-if(CMAKE_COMPILER_IS_GNUCXX)
-    add_definitions(
-        -std=c++14
-    )
-endif()
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" "${CMAKE_CURRENT_SOURCE_DIR}/modules/cmake")
+
 
 if(NOT DEFINED CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
@@ -38,12 +35,12 @@ else()
     set(OpenGL_GL_PREFERENCE GLVND)
 endif()
 find_package(OpenGL REQUIRED)
+find_package(GLEW REQUIRED)
 
 if(GLTF_VIEWER_USE_BOOST_FILESYSTEM)
     find_package(Boost COMPONENTS system filesystem REQUIRED)
 endif()
 
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -78,17 +75,30 @@ set(
 )
 
 set(
+    THIRD_PARTY_INCLUDE_FILES
+    ${OPENGL_INCLUDE_DIRS}
+    ${GLEW_INCLUDE_DIRS}
+    third-party/${GLFW_DIR}/include
+    third-party/${GLM_DIR}
+    third-party/${GLAD_DIR}/include
+    third-party/${IMGUI_DIR}
+    third-party/${IMGUI_DIR}/examples/
+    third-party/${TINYGLTF_DIR}/include
+    third-party/${ARGS_DIR}
+    lib/include
+)
+
+set(
     LIBRARIES
     ${OPENGL_LIBRARIES}
+    ${GLEW_LIBRARIES}
     glfw
 )
 
-set(CXXFLAGS ${CXXFLAGS} std=c++14)
 if (GLTF_VIEWER_USE_BOOST_FILESYSTEM)
     set(LIBRARIES ${LIBRARIES} ${Boost_SYSTEM_LIBRARY} ${Boost_FILESYSTEM_LIBRARY})
 else()
     if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-        set(CXXFLAGS ${CXXFLAGS} std=c++17)
         set(LIBRARIES ${LIBRARIES} stdc++fs)
         if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "8.0.0")
             set(USE_STD_FILESYSTEM 1)
@@ -98,7 +108,6 @@ else()
         if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0.0")
             set(LIBRARIES ${LIBRARIES} stdc++fs)
         else()
-            set(CXXFLAGS ${CXXFLAGS} std=c++17)
             set(USE_STD_FILESYSTEM 1)
         endif()
     endif()
@@ -110,6 +119,19 @@ source_group("third-party" REGULAR_EXPRESSION "third-party/*.*")
 set(APP gltf-viewer)
 set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
 
+add_library(third-party ${THIRD_PARTY_SRC_FILES})
+target_include_directories(
+        # ${APP}
+        third-party
+        SYSTEM PUBLIC ${THIRD_PARTY_INCLUDE_FILES}
+)
+target_link_libraries(
+        # ${APP}
+        third-party
+        ${LIBRARIES}
+)
+
+
 file(
     GLOB_RECURSE
     SRC_FILES
@@ -119,8 +141,14 @@ file(
 add_executable(
     ${APP}
     ${SRC_FILES}
-    ${THIRD_PARTY_SRC_FILES}
 )
+
+target_include_directories(
+        ${APP}
+        SYSTEM PUBLIC ${THIRD_PARTY_INCLUDE_FILES}
+)
+
+target_link_libraries(${APP} third-party)
 
 if(GLTF_VIEWER_USE_BOOST_FILESYSTEM)
     target_include_directories (
@@ -135,19 +163,6 @@ if(GLTF_VIEWER_USE_BOOST_FILESYSTEM)
     )
 endif()
 
-target_include_directories(
-    ${APP}
-    PUBLIC
-    ${OPENGL_INCLUDE_DIRS}
-    third-party/${GLFW_DIR}/include
-    third-party/${GLM_DIR}
-    third-party/${GLAD_DIR}/include
-    third-party/${IMGUI_DIR}
-    third-party/${IMGUI_DIR}/examples/
-    third-party/${TINYGLTF_DIR}/include
-    third-party/${ARGS_DIR}
-    lib/include
-)
 
 target_compile_definitions(
     ${APP}
@@ -156,16 +171,21 @@ target_compile_definitions(
     GLM_ENABLE_EXPERIMENTAL
 )
 
+include(SetProjectFlags)
+
+# apply Project flags and c++ standard defined in included cmake files.
+target_compile_options(
+        ${APP} PRIVATE
+        ${${PROJECT_NAME}_CXX_FLAGS}
+       # ${${PROJECT_NAME}_CXX_STANDARD}
+)
+
 if(${CMAKE_VERSION} VERSION_LESS "3.8.0")
     set_property(TARGET ${APP} PROPERTY CXX_STANDARD 14)
 else()
     set_property(TARGET ${APP} PROPERTY CXX_STANDARD 17)
 endif()
 
-target_link_libraries(
-    ${APP}
-    ${LIBRARIES}
-)
 
 install(
     TARGETS ${APP}

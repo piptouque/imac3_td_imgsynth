@@ -16,34 +16,36 @@ int main(int argc, char **argv)
   args::HelpFlag help{parser, "help", "Display this help menu", {'h', "help"}};
   args::Group commands{parser, "commands"};
   args::Command info{commands, "info", "Display info about OpenGL",
-      [&](args::Subparser &parser) {
-        parser.Parse();
+      [&](args::Subparser &p) {
+        p.Parse();
         GLFWHandle handle{1, 1, "", false};
         printGLVersion();
       }};
   args::Command interactive{
-      commands, "viewer", "Run glTF viewer", [&](args::Subparser &parser) {
+      commands, "viewer", "Run glTF viewer",
+      [&](args::Subparser &p) {
         args::Positional<std::string> file{
-            parser, "file", "Path to file", args::Options::Required};
-        args::ValueFlag<std::string> lookat{parser, "lookat",
+            p, "file", "Path to file",
+            args::Options::Required};
+        args::ValueFlag<std::string> lookat{p, "lookat",
             "Look at parameters for the Camera with format "
             "eye_x,eye_y,eye_z,center_x,center_y,center_z,up_x,up_y,up_z",
             {"lookat"}};
         args::ValueFlag<std::string> vertexShader{
-            parser, "vs", "Vertex shader to use", {"vs"}};
+            p, "vs", "Vertex shader to use", {"vs"}};
         args::ValueFlag<std::string> fragmentShader{
-            parser, "fs", "Fragment shader to use", {"fs"}};
-        args::ValueFlag<int32_t> imageWidth{parser, "width",
+            p, "fs", "Fragment shader to use", {"fs"}};
+        args::ValueFlag<int32_t> imageWidth{p, "width",
             "Width of window or output image if -b is specified",
             {"w", "width"}};
-        args::ValueFlag<int32_t> imageHeight{parser, "height",
+        args::ValueFlag<int32_t> imageHeight{p, "height",
             "Height of window or output image if -b is specified",
             {"h", "height"}};
-        args::ValueFlag<std::string> output{parser, "output",
+        args::ValueFlag<std::string> output{p, "output",
             "Output path to render the image. If specified no window is shown. "
             "Only png is supported.",
             {"o", "output"}};
-        parser.Parse();
+        p.Parse();
 
         std::vector<float> lookatParams;
         if (lookat) {
@@ -59,8 +61,12 @@ int main(int argc, char **argv)
           }
         }
 
-        uint32_t width = imageWidth ? args::get(imageWidth) : 1280;
-        uint32_t height = imageHeight ? args::get(imageHeight) : 720;
+        uint32_t width = imageWidth
+           ? static_cast<uint32_t>(args::get(imageWidth))
+                  : 1280;
+        uint32_t height = imageHeight
+            ? static_cast<uint32_t>(args::get(imageHeight))
+            : 720;
 
         ViewerApplication app{fs::path{argv[0]}, width, height, args::get(file),
             lookatParams, args::get(vertexShader), args::get(fragmentShader),

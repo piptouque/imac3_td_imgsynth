@@ -14,7 +14,8 @@
 #include <tiny_gltf.h>
 
 void keyCallback(
-    GLFWwindow *window, int key, int scancode, int action, int mods)
+    GLFWwindow *window, int key, [[maybe_unused]] int scancode,
+    int action, [[maybe_unused]] int mods)
 {
   if (key == GLFW_KEY_ESCAPE && action == GLFW_RELEASE) {
     glfwSetWindowShouldClose(window, 1);
@@ -28,18 +29,19 @@ int ViewerApplication::run()
       compileProgram({m_ShadersRootPath / m_vertexShader,
           m_ShadersRootPath / m_fragmentShader});
 
-  const auto modelViewProjMatrixLocation =
+  [[maybe_unused]] const auto modelViewProjMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
-  const auto modelViewMatrixLocation =
+  [[maybe_unused]] const auto modelViewMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
-  const auto normalMatrixLocation =
+  [[maybe_unused]] const auto normalMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
 
   // Build projection matrix
   auto maxDistance = 500.f; // TODO use scene bounds instead to compute this
   maxDistance = maxDistance > 0.f ? maxDistance : 100.f;
-  const auto projMatrix =
-      glm::perspective(70.f, float(m_nWindowWidth) / m_nWindowHeight,
+  [[maybe_unused]] const auto projMatrix =
+      glm::perspective(70.f,
+          static_cast<float>(m_nWindowWidth) / static_cast<float>(m_nWindowHeight),
           0.001f * maxDistance, 1.5f * maxDistance);
 
   // TODO Implement a new CameraController model and use it instead. Propose the
@@ -70,12 +72,12 @@ int ViewerApplication::run()
     glViewport(0, 0, m_nWindowWidth, m_nWindowHeight);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    const auto viewMatrix = camera.getViewMatrix();
+    [[maybe_unused]] const auto viewMatrix = camera.getViewMatrix();
 
     // The recursive function that should draw a node
     // We use a std::function because a simple lambda cannot be recursive
     const std::function<void(int, const glm::mat4 &)> drawNode =
-        [&](int nodeIdx, const glm::mat4 &parentMatrix) {
+        [&]([[maybe_unused]] int nodeIdx, [[maybe_unused]] const glm::mat4 &parentMatrix) {
           // TODO The drawNode function
         };
 
@@ -149,16 +151,16 @@ ViewerApplication::ViewerApplication(const fs::path &appPath, uint32_t width,
     uint32_t height, const fs::path &gltfFile,
     const std::vector<float> &lookatArgs, const std::string &vertexShader,
     const std::string &fragmentShader, const fs::path &output) :
-    m_nWindowWidth(width),
-    m_nWindowHeight(height),
+    m_nWindowWidth(static_cast<GLsizei>(width)),
+    m_nWindowHeight(static_cast<GLsizei>(height)),
     m_AppPath{appPath},
     m_AppName{m_AppPath.stem().string()},
-    m_ImGuiIniFilename{m_AppName + ".imgui.ini"},
     m_ShadersRootPath{m_AppPath.parent_path() / "shaders"},
     m_gltfFilePath{gltfFile},
-    m_OutputPath{output}
+    m_OutputPath{output},
+    m_ImGuiIniFilename{m_AppName + ".imgui.ini"}
 {
-  if (!lookatArgs.empty()) {
+if (!lookatArgs.empty()) {
     m_hasUserCamera = true;
     m_userCamera =
         Camera{glm::vec3(lookatArgs[0], lookatArgs[1], lookatArgs[2]),

@@ -34,6 +34,7 @@ static const std::vector<std::tuple<GLenum, GLenum, GLenum>> ignoreList = {
         GL_DEBUG_SEVERITY_NOTIFICATION) // Ignore all notifications
 };
 
+[[maybe_unused]]
 static std::array<std::tuple<const char *, bool, GLenum>, 6> sourceSelector = {
     std::make_tuple("API", true, GL_DEBUG_SOURCE_API),
     std::make_tuple("WINDOW_SYSTEM", true, GL_DEBUG_SOURCE_WINDOW_SYSTEM),
@@ -43,6 +44,7 @@ static std::array<std::tuple<const char *, bool, GLenum>, 6> sourceSelector = {
     std::make_tuple("OTHER", true, GL_DEBUG_SOURCE_OTHER),
 };
 
+[[maybe_unused]]
 static std::array<std::tuple<const char *, bool, GLenum>, 6> typeSelector = {
     std::make_tuple("ERROR", true, GL_DEBUG_TYPE_ERROR),
     std::make_tuple(
@@ -54,6 +56,7 @@ static std::array<std::tuple<const char *, bool, GLenum>, 6> typeSelector = {
     std::make_tuple("OTHER", true, GL_DEBUG_TYPE_OTHER),
 };
 
+[[maybe_unused]]
 static std::array<std::tuple<const char *, bool, GLenum>, 4> severitySelector =
     {std::make_tuple("HIGH", true, GL_DEBUG_SEVERITY_HIGH),
         std::make_tuple("MEDIUM", true, GL_DEBUG_SEVERITY_MEDIUM),
@@ -65,7 +68,7 @@ void logGLDebugInfo(GLenum source, GLenum type, GLuint id, GLenum severity,
 
 void initGLDebugOutput()
 {
-  glDebugMessageCallback((GLDEBUGPROCARB)logGLDebugInfo, nullptr);
+  glDebugMessageCallback(reinterpret_cast<GLDEBUGPROCARB>(logGLDebugInfo), nullptr);
   glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 
   for (const auto &tuple : ignoreList) {
@@ -75,7 +78,8 @@ void initGLDebugOutput()
 }
 
 void logGLDebugInfo(GLenum source, GLenum type, GLuint id, GLenum severity,
-    GLsizei length, const GLchar *message, GLvoid *userParam)
+    [[maybe_unused]] GLsizei length,
+    const GLchar *message, [[maybe_unused]] GLvoid *userParam)
 {
   const auto findStr = [](GLenum value, const auto &map) {
     const auto it = map.find(value);

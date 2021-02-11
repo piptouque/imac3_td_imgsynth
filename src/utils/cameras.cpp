@@ -94,8 +94,13 @@ bool FirstPersonCameraController::update(float elapsedTime)
   const float panLeftAngle = -0.01f * float(cursorDelta.x);
   const float tiltDownAngle = 0.01f * float(cursorDelta.y);
 
-  const auto hasMoved = truckLeft || pedestalUp || dollyIn || panLeftAngle ||
-                        tiltDownAngle || rollRightAngle;
+  const auto hasMoved =
+      truckLeft != 0.0f
+      || pedestalUp != 0.0f
+      || dollyIn != 0.0f
+      || panLeftAngle != 0.0f
+      || tiltDownAngle != 0.0f
+      || rollRightAngle != 0.0f;
   if (!hasMoved) {
     return false;
   }
@@ -107,4 +112,4 @@ bool FirstPersonCameraController::update(float elapsedTime)
   return true;
 }
 
-bool TrackballCameraController::update(float elapsedTime) { return false; }
+bool TrackballCameraController::update([[maybe_unused]] float elapsedTime) { return false; }
