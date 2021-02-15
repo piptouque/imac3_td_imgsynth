@@ -14,6 +14,11 @@
 #include <tiny_gltf.h>
 
 // TD
+
+static constexpr GLuint VERTEX_ATTRIB_POSITION_IDX  = 0;
+static constexpr GLuint VERTEX_ATTRIB_NORMAL_IDX    = 1;
+static constexpr GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
+
 bool ViewerApplication::loadGltfFile(tinygltf::Model & model) const {
   tinygltf::TinyGLTF loader;
   std::string err, warn;
@@ -30,6 +35,110 @@ bool ViewerApplication::loadGltfFile(tinygltf::Model & model) const {
     std::cerr << "Failed to parse GLTF file at " << m_gltfFilePath << std::endl;
   }
   return success;
+}
+
+std::vector<GLuint> ViewerApplication::createBufferObjects(
+    const tinygltf::Model &model) {
+  std::vector<GLuint> bufferObjects(model.buffers.size());
+  glGenBuffers(static_cast<GLsizei>(bufferObjects.size()), bufferObjects.data());
+  for (std::size_t i = 0; i < bufferObjects.size(); ++i) {
+    glBindBuffer(GL_ARRAY_BUFFER, bufferObjects.at(i));
+    // todo: is this right?
+    //  see: https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/glBufferStorage.xhtml
+    glBufferStorage(
+      GL_ARRAY_BUFFER,
+      model.buffers.at(i).data.size(),
+      model.buffers.at(i).data.data(),
+      GL_DYNAMIC_STORAGE_BIT
+    );
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return bufferObjects;
+}
+
+std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
+    const tinygltf::Model & model,
+    const std::vector<GLuint> & bufferObjects,
+    std::vector<VaoRange> & meshIndexToVaoRange) {
+  std::vector<GLuint> vertexArrayObjects;
+  // todo
+  for (const auto &mesh : model.meshes) {
+    const std::size_t vaoOffset = vertexArrayObjects.size();
+    vertexArrayObjects.resize(vaoOffset + mesh.primitives.size());
+
+    //
+    glGenVertexArrays(
+        static_cast<GLsizei>(mesh.primitives.size()),
+        vertexArrayObjects.data() + vaoOffset
+    );
+
+    std::size_t primitiveIdx = 0;
+    for (const auto &primitive : mesh.primitives) {
+      const GLuint primitiveVao =
+          vertexArrayObjects.at(vaoOffset + primitiveIdx);
+      glBindVertexArray(primitiveVao);
+
+      static const std::array<std::pair<std::string, int>, 3> attributes = {
+          {{"POSITION", VERTEX_ATTRIB_POSITION_IDX},
+              {"NORMAL", VERTEX_ATTRIB_NORMAL_IDX},
+              {"TEXCOORD_0", VERTEX_ATTRIB_TEXCOORD0_IDX}}};
+      const auto findAccessor = [&model](int accessorIdx) -> const tinygltf::Accessor & {
+        return model.accessors.at(static_cast<std::size_t>(accessorIdx));
+      };
+      const auto findBufferView = [&model](const tinygltf::Accessor & accessor) -> const tinygltf::BufferView & {
+        // get the correct tinygltf::Accessor from model.accessors
+        const auto bufferViewIdx = static_cast<std::size_t>(accessor.bufferView);
+        // get the correct tinygltf::BufferView from model.bufferViews.
+        return model.bufferViews.at(bufferViewIdx);
+      };
+      const auto findBufferObject = [&bufferObjects](const tinygltf::BufferView & bufferView)
+          -> GLuint {
+        // get the index of the buffer used by the bufferView
+        const auto bufferIdx = static_cast<std::size_t>(bufferView.buffer);
+        return bufferObjects.at(bufferIdx);
+      };
+      for (const auto &attribute : attributes) {
+        // I'm opening a scope because I want to reuse the variable iterator in the code for NORMAL and TEXCOORD_0
+        const auto iterator = primitive.attributes.find(attribute.first);
+        // If "POSITION" has been found in the map
+        if (iterator == std::end(primitive.attributes)) {
+          continue;
+        }
+        // (*iterator).first is the key "POSITION",
+        // (*iterator).second is the value, ie. the index of the accessor for this attribute
+        const tinygltf::Accessor & accessor = findAccessor(iterator->second);
+        const tinygltf::BufferView & bufferView = findBufferView(accessor);
+        const GLuint bufferObject = findBufferObject(bufferView);
+
+        // Enable the vertex attrib array corresponding to POSITION with glEnableVertexAttribArray (you need to use VERTEX_ATTRIB_POSITION_IDX which has to be defined at the top of the cpp file)
+        glEnableVertexAttribArray(attribute.second);
+        // Bind the buffer object to GL_ARRAY_BUFFER
+        glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
+        // Compute the total byte offset using the accessor and the buffer view
+        const auto byteOffset = accessor.byteOffset + bufferView.byteLength;
+        // Call glVertexAttribPointer with the correct arguments.
+        glVertexAttribPointer(attribute.second, accessor.type,
+              static_cast<GLenum>(accessor.componentType),
+              GL_FALSE,
+              static_cast<GLsizei>(bufferView.byteStride),
+              reinterpret_cast<GLvoid *>(byteOffset)
+        );
+      }
+      if (primitive.indices >= 0) {
+        const tinygltf::Accessor & accessor = findAccessor(primitive.indices);
+        const tinygltf::BufferView & bufferView = findBufferView(accessor);
+        const GLuint bufferObject = findBufferObject(bufferView);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufferObject);
+      }
+      // Remember size is obtained with accessor.type, type is obtained with accessor.componentType. The stride is obtained in the bufferView, normalized is always GL_FALSE, and pointer is the byteOffset (don't forget the cast).
+      ++primitiveIdx;
+
+      glBindVertexArray(0);
+      meshIndexToVaoRange.push_back(VaoRange{static_cast<GLsizei>(vaoOffset),
+          static_cast<GLsizei>(mesh.primitives.size())});
+    }
+  }
+  return vertexArrayObjects;
 }
 
 void keyCallback(
@@ -77,13 +186,12 @@ int ViewerApplication::run()
   }
 
   tinygltf::Model model;
-  // TODO Loading the glTF file
   if (!loadGltfFile(model)) {
     // no gl object has been allocated, can return safely (?)
     return 1;
   }
 
-  // TODO Creation of Buffer Objects
+  std::vector<GLuint> bufferObjects = createBufferObjects(model);
 
   // TODO Creation of Vertex Array Objects
 
