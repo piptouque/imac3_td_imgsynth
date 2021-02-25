@@ -23,7 +23,6 @@ public:
       throw std::runtime_error("Unable to init GLFW.\n");
     }
 
-
     if (!visible) {
       glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     }
@@ -51,7 +50,6 @@ public:
       std::cerr << "Unable to init OpenGL.\n";
       throw std::runtime_error("Unable to init OpenGL.\n");
     }
-
 
     initGLDebugOutput();
 

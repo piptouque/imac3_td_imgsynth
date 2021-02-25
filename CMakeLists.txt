@@ -35,7 +35,6 @@ else()
     set(OpenGL_GL_PREFERENCE GLVND)
 endif()
 find_package(OpenGL REQUIRED)
-find_package(GLEW REQUIRED)
 
 if(GLTF_VIEWER_USE_BOOST_FILESYSTEM)
     find_package(Boost COMPONENTS system filesystem REQUIRED)
@@ -77,7 +76,6 @@ set(
 set(
     THIRD_PARTY_INCLUDE_FILES
     ${OPENGL_INCLUDE_DIRS}
-    ${GLEW_INCLUDE_DIRS}
     third-party/${GLFW_DIR}/include
     third-party/${GLM_DIR}
     third-party/${GLAD_DIR}/include
@@ -91,7 +89,6 @@ set(
 set(
     LIBRARIES
     ${OPENGL_LIBRARIES}
-    ${GLEW_LIBRARIES}
     glfw
 )
 
@@ -164,7 +161,7 @@ endif()
 
 
 target_compile_definitions(
-    ${APP}
+    third-party
     PUBLIC
     IMGUI_IMPL_OPENGL_LOADER_GLAD
     GLM_ENABLE_EXPERIMENTAL
