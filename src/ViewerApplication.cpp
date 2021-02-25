@@ -188,8 +188,20 @@ int ViewerApplication::run()
   const auto normalMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
 
+  // first load the model in order to set camera according to scene bounds.
+  tinygltf::Model model;
+  if (!loadGltfFile(model)) {
+    // no gl object has been allocated, can return safely (?)
+    return 1;
+  }
+
   // Build projection matrix
-  auto maxDistance = 500.f; // TODO use scene bounds instead to compute this
+  glm::vec3 bboxMin, bboxMax;
+  computeSceneBounds(model, bboxMin, bboxMax);
+
+  const glm::vec3 diag = bboxMax - bboxMin;
+
+  float maxDistance = glm::length(diag);
   maxDistance = maxDistance > 0.f ? maxDistance : 100.f;
   const auto projMatrix =
       glm::perspective(70.f,
@@ -203,16 +215,19 @@ int ViewerApplication::run()
   if (m_hasUserCamera) {
     cameraController.setCamera(m_userCamera);
   } else {
-    // TODO Use scene bounds to compute a better default camera
-    cameraController.setCamera(
-        Camera{glm::vec3(0, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)});
+    const bool isSceneFlatOnZaxis = diag.z < 0.01;
+
+    const glm::vec3 centre = bboxMin + diag * 0.5f;
+    const glm::vec3 up = glm::vec3(0, 1, 0);
+    const glm::vec3 eye = centre
+          + (isSceneFlatOnZaxis
+              ? diag
+              : glm::cross(diag, up) * 2.f);
+
+    cameraController.setCamera(Camera(eye, centre, up));
+    cameraController.setSpeed(maxDistance * 3.f);
   }
 
-  tinygltf::Model model;
-  if (!loadGltfFile(model)) {
-    // no gl object has been allocated, can return safely (?)
-    return 1;
-  }
 
   std::vector<GLuint> bufferObjects = createBufferObjects(model);
 
