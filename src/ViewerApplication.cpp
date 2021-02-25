@@ -9,6 +9,7 @@
 #include <glm/gtx/io.hpp>
 
 #include "utils/cameras.hpp"
+#include "utils/gltf.hpp"
 
 #include <stb_image_write.h>
 #include <tiny_gltf.h>
@@ -18,6 +19,29 @@
 static constexpr GLuint VERTEX_ATTRIB_POSITION_IDX  = 0;
 static constexpr GLuint VERTEX_ATTRIB_NORMAL_IDX    = 1;
 static constexpr GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
+
+namespace {
+  const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
+    return model.accessors.at(static_cast<std::size_t>(accessorIdx));
+  }
+
+  const tinygltf::BufferView & findBufferView(const tinygltf::Model & model, const tinygltf::Accessor & accessor) {
+    // get the correct tinygltf::Accessor from model.accessors
+    const auto bufferViewIdx = static_cast<std::size_t>(accessor.bufferView);
+    // get the correct tinygltf::BufferView from model.bufferViews.
+    return model.bufferViews.at(bufferViewIdx);
+  }
+
+  GLuint findBufferObject(const std::vector<GLuint> & bufferObjects, const tinygltf::BufferView & bufferView) {
+    // get the index of the buffer used by the bufferView
+    const auto bufferIdx = static_cast<std::size_t>(bufferView.buffer);
+    return bufferObjects.at(bufferIdx);
+  }
+
+  std::size_t getByteOffset(const tinygltf::Accessor & accessor, const tinygltf::BufferView bufferView) {
+    return accessor.byteOffset + bufferView.byteLength;
+  }
+}
 
 bool ViewerApplication::loadGltfFile(tinygltf::Model & model) const {
   tinygltf::TinyGLTF loader;
@@ -82,21 +106,7 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
           {{"POSITION", VERTEX_ATTRIB_POSITION_IDX},
               {"NORMAL", VERTEX_ATTRIB_NORMAL_IDX},
               {"TEXCOORD_0", VERTEX_ATTRIB_TEXCOORD0_IDX}}};
-      const auto findAccessor = [&model](int accessorIdx) -> const tinygltf::Accessor & {
-        return model.accessors.at(static_cast<std::size_t>(accessorIdx));
-      };
-      const auto findBufferView = [&model](const tinygltf::Accessor & accessor) -> const tinygltf::BufferView & {
-        // get the correct tinygltf::Accessor from model.accessors
-        const auto bufferViewIdx = static_cast<std::size_t>(accessor.bufferView);
-        // get the correct tinygltf::BufferView from model.bufferViews.
-        return model.bufferViews.at(bufferViewIdx);
-      };
-      const auto findBufferObject = [&bufferObjects](const tinygltf::BufferView & bufferView)
-          -> GLuint {
-        // get the index of the buffer used by the bufferView
-        const auto bufferIdx = static_cast<std::size_t>(bufferView.buffer);
-        return bufferObjects.at(bufferIdx);
-      };
+
       for (const auto &attribute : attributes) {
         // I'm opening a scope because I want to reuse the variable iterator in the code for NORMAL and TEXCOORD_0
         const auto iterator = primitive.attributes.find(attribute.first);
@@ -106,16 +116,16 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
         }
         // (*iterator).first is the key "POSITION",
         // (*iterator).second is the value, ie. the index of the accessor for this attribute
-        const tinygltf::Accessor & accessor = findAccessor(iterator->second);
-        const tinygltf::BufferView & bufferView = findBufferView(accessor);
-        const GLuint bufferObject = findBufferObject(bufferView);
+        const tinygltf::Accessor & accessor = findAccessor(model, iterator->second);
+        const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
+        const GLuint bufferObject = findBufferObject(bufferObjects, bufferView);
 
         // Enable the vertex attrib array corresponding to POSITION with glEnableVertexAttribArray (you need to use VERTEX_ATTRIB_POSITION_IDX which has to be defined at the top of the cpp file)
         glEnableVertexAttribArray(attribute.second);
         // Bind the buffer object to GL_ARRAY_BUFFER
         glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
         // Compute the total byte offset using the accessor and the buffer view
-        const auto byteOffset = accessor.byteOffset + bufferView.byteLength;
+        const std::size_t byteOffset = getByteOffset(accessor, bufferView);
         // Call glVertexAttribPointer with the correct arguments.
         glVertexAttribPointer(attribute.second, accessor.type,
               static_cast<GLenum>(accessor.componentType),
@@ -125,9 +135,9 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
         );
       }
       if (primitive.indices >= 0) {
-        const tinygltf::Accessor & accessor = findAccessor(primitive.indices);
-        const tinygltf::BufferView & bufferView = findBufferView(accessor);
-        const GLuint bufferObject = findBufferObject(bufferView);
+        const tinygltf::Accessor & accessor = findAccessor(model, primitive.indices);
+        const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
+        const GLuint bufferObject = findBufferObject(bufferObjects, bufferView);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufferObject);
       }
       // Remember size is obtained with accessor.type, type is obtained with accessor.componentType. The stride is obtained in the bufferView, normalized is always GL_FALSE, and pointer is the byteOffset (don't forget the cast).
@@ -158,17 +168,17 @@ int ViewerApplication::run()
       compileProgram({m_ShadersRootPath / m_vertexShader,
           m_ShadersRootPath / m_fragmentShader});
 
-  [[maybe_unused]] const auto modelViewProjMatrixLocation =
+  const auto modelViewProjMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
-  [[maybe_unused]] const auto modelViewMatrixLocation =
+  const auto modelViewMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
-  [[maybe_unused]] const auto normalMatrixLocation =
+  const auto normalMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
 
   // Build projection matrix
   auto maxDistance = 500.f; // TODO use scene bounds instead to compute this
   maxDistance = maxDistance > 0.f ? maxDistance : 100.f;
-  [[maybe_unused]] const auto projMatrix =
+  const auto projMatrix =
       glm::perspective(70.f,
           static_cast<float>(m_nWindowWidth) / static_cast<float>(m_nWindowHeight),
           0.001f * maxDistance, 1.5f * maxDistance);
@@ -194,6 +204,9 @@ int ViewerApplication::run()
   std::vector<GLuint> bufferObjects = createBufferObjects(model);
 
   // TODO Creation of Vertex Array Objects
+  std::vector<VaoRange> meshIndexToVaoRange;
+  std::vector<GLuint> vertexArrayObjects = createVertexArrayObjects(
+      model, bufferObjects, meshIndexToVaoRange);
 
   // Setup OpenGL state for rendering
   glEnable(GL_DEPTH_TEST);
@@ -204,18 +217,89 @@ int ViewerApplication::run()
     glViewport(0, 0, m_nWindowWidth, m_nWindowHeight);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    [[maybe_unused]] const auto viewMatrix = camera.getViewMatrix();
+    const auto viewMatrix = camera.getViewMatrix();
 
     // The recursive function that should draw a node
     // We use a std::function because a simple lambda cannot be recursive
     const std::function<void(int, const glm::mat4 &)> drawNode =
-        [&]([[maybe_unused]] int nodeIdx, [[maybe_unused]] const glm::mat4 &parentMatrix) {
+        [&](int nodeIdx, const glm::mat4 &parentMatrix) {
           // TODO The drawNode function
+          const tinygltf::Node & node = model.nodes.at(static_cast<std::size_t>(nodeIdx));
+          const glm::mat4 modelMatrix = getLocalToWorldMatrix(node, parentMatrix);
+          if (node.mesh >= 0) {
+            const glm::mat4 modelViewMatrix = viewMatrix * modelMatrix;
+            const glm::mat4 modelViewProjectionMatrix = projMatrix * modelViewMatrix;
+            const glm::mat4 normalMatrix = glm::transpose(glm::inverse(modelViewMatrix));
+
+            glUniformMatrix4fv(
+              modelViewMatrixLocation,
+                1,
+                GL_FALSE,
+                glm::value_ptr(modelViewMatrix)
+            );
+            glUniformMatrix4fv(
+                modelViewProjMatrixLocation,
+                1,
+                GL_FALSE,
+                glm::value_ptr(modelViewProjectionMatrix)
+            );
+            glUniformMatrix4fv(
+                normalMatrixLocation,
+                1,
+                GL_FALSE,
+                glm::value_ptr(normalMatrix)
+            );
+
+            const auto meshIdx = static_cast<std::size_t>(node.mesh);
+            const tinygltf::Mesh mesh = model.meshes.at(meshIdx);
+
+            std::size_t primitiveIdx = 0;
+            for (const auto & primitive : mesh.primitives) {
+              const VaoRange vaoRange = meshIndexToVaoRange.at(meshIdx);
+              const GLuint vao = vertexArrayObjects.at(
+                  static_cast<std::size_t>(vaoRange.begin) + primitiveIdx);
+
+              glBindVertexArray(vao);
+              if (primitive.indices >= 0) {
+                const tinygltf::Accessor & accessor = findAccessor(model,
+                    static_cast<int>(primitiveIdx));
+                const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
+                const std::size_t byteOffset = getByteOffset(accessor, bufferView);
+                glDrawElements(
+                  primitive.mode,
+                  static_cast<GLsizei>(accessor.count),
+                  accessor.componentType,
+                  reinterpret_cast<GLvoid *>(byteOffset)
+                );
+              } else {
+                const auto accessorIdx = static_cast<std::size_t>(std::begin(
+                    primitive.attributes)->second);
+                const tinygltf::Accessor & accessor = model.accessors.at(accessorIdx);
+                glDrawArrays(
+                    primitive.mode,
+                    0,
+                    static_cast<GLsizei>(accessor.count)
+                );
+              }
+              for (const int childIdx : node.children) {
+                drawNode(childIdx, modelMatrix);
+              }
+              ++primitiveIdx;
+            }
+
+          }
         };
 
     // Draw the scene referenced by gltf file
     if (model.defaultScene >= 0) {
       // TODO Draw all nodes
+      const auto sceneIdx = static_cast<std::size_t>(model.defaultScene);
+      const auto & nodes = model.scenes[sceneIdx].nodes;
+      std::for_each(nodes.cbegin(), nodes.cend(),
+        [&](int nodeIdx) -> void {
+          drawNode(nodeIdx, glm::identity<glm::mat4>());
+      });
+
     }
   };
 
@@ -290,7 +374,10 @@ ViewerApplication::ViewerApplication(const fs::path &appPath, uint32_t width,
     m_ShadersRootPath{m_AppPath.parent_path() / "shaders"},
     m_gltfFilePath{gltfFile},
     m_OutputPath{output},
-    m_ImGuiIniFilename{m_AppName + ".imgui.ini"}
+    m_ImGuiIniFilename{m_AppName + ".imgui.ini"},
+    m_GLFWHandle {int(m_nWindowWidth), int(m_nWindowHeight),
+      "glTF Viewer",
+      m_OutputPath.empty()} // show the window only if m_OutputPath is empty
 {
 if (!lookatArgs.empty()) {
     m_hasUserCamera = true;

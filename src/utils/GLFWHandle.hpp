@@ -23,6 +23,7 @@ public:
       throw std::runtime_error("Unable to init GLFW.\n");
     }
 
+
     if (!visible) {
       glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     }
@@ -51,6 +52,7 @@ public:
       throw std::runtime_error("Unable to init OpenGL.\n");
     }
 
+
     initGLDebugOutput();
 
     // Setup ImGui
@@ -58,6 +60,7 @@ public:
     ImGui_ImplGlfw_InitForOpenGL(m_pWindow, true);
     const char *glsl_version = "#version 130";
     ImGui_ImplOpenGL3_Init(glsl_version);
+
   }
 
   ~GLFWHandle()
