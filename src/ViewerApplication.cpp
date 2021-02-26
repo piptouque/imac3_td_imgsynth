@@ -21,6 +21,9 @@ static constexpr GLuint VERTEX_ATTRIB_POSITION_IDX  = 0;
 static constexpr GLuint VERTEX_ATTRIB_NORMAL_IDX    = 1;
 static constexpr GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
 
+static constexpr const char* DIRECTIONALLIGHT_STORAGE_BLOCK_NAME = "sDirectionalLight";
+static constexpr GLuint DIRECTIONALLIGHT_BINDING_INDEX = 1;
+
 namespace {
   const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
     return model.accessors.at(static_cast<std::size_t>(accessorIdx));
@@ -42,6 +45,71 @@ namespace {
   std::size_t getByteOffset(const tinygltf::Accessor & accessor, const tinygltf::BufferView bufferView) {
     return accessor.byteOffset + bufferView.byteOffset;
   }
+
+  class DirectionalLight
+  {
+  public:
+    DirectionalLight() = default;
+    DirectionalLight(glm::vec3 colour, float intensity, glm::vec3 dir)
+      : m_colour(colour), m_intensity(intensity)
+    {
+      setDirection(dir);
+    }
+
+    [[nodiscard]] inline const glm::vec3 & getDirection() const { return m_dir; }
+    [[nodiscard]] inline glm::vec3 getRadiance() const { return m_colour * m_intensity; }
+    [[nodiscard]] inline const glm::vec3 & getColour() const { return m_colour; }
+    [[nodiscard]] inline float getIntensity() const { return m_intensity; }
+    [[nodiscard]] inline glm::vec2 getEulerAngles() const { return glm::vec2(m_theta, m_phi); }
+    inline void setColour(glm::vec3 colour) { m_colour = glm::normalize(colour); }
+    inline void setIntensity(float intensity) { m_intensity = intensity; }
+
+    void setDirection(glm::vec3 a_dir)
+    {
+      m_dir = a_dir;
+      const glm::vec3 euler = computeEulerAngles(m_dir);
+      m_theta = euler.x;
+      m_phi = euler.y;
+    }
+
+    void setDirection(float theta, float phi)
+    {
+      m_theta = theta;
+      m_phi = phi;
+      m_dir = computeDirection(m_theta, m_phi);
+    }
+
+  private:
+    [[nodiscard]] static glm::vec3 computeDirection(float theta, float phi)
+    {
+      const float sinTheta = glm::sin(theta);
+      return glm::vec3(sinTheta * glm::cos(phi),
+                        glm::cos(theta),
+                        glm::sin(theta) * glm::sin(phi));
+    }
+
+    [[nodiscard]] static glm::vec3 computeEulerAngles(glm::vec3 dir)
+    {
+      const glm::quat quat = glm::rotation(glm::vec3(), dir);
+      return glm::eulerAngles(quat);
+    }
+
+  private:
+    glm::vec3 m_colour;
+    float m_intensity;
+    //
+    glm::vec3 m_dir;
+    // degrees
+    float m_theta;
+    float m_phi;
+  };
+
+  // OpenGL data
+  struct DirectionalLightData
+  {
+    glm::vec4 viewDir;
+    glm::vec4 radiance;
+  };
 }
 
 bool ViewerApplication::loadGltfFile(tinygltf::Model & model) const {
@@ -188,6 +256,31 @@ int ViewerApplication::run()
   const auto normalMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
 
+
+  GLuint lightBuffer;
+  // Light SSBO stuff
+  {
+    glGenBuffers(1, &lightBuffer);
+
+    const GLuint lightStorageBlockIndex =
+        glGetProgramResourceIndex(glslProgram.glId(), GL_SHADER_STORAGE_BLOCK, "sDirectionalLight");
+    assert(lightStorageBlockIndex != GL_INVALID_INDEX);
+
+    // Alloc and binding
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+        static_cast<GLsizeiptr>(sizeof(DirectionalLightData) * 1),
+        nullptr,
+        GL_DYNAMIC_DRAW
+      );
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Linking to shader.
+    glShaderStorageBlockBinding(glslProgram.glId(), lightStorageBlockIndex,
+        DIRECTIONALLIGHT_BINDING_INDEX);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DIRECTIONALLIGHT_BINDING_INDEX, lightBuffer);
+  }
+
   // first load the model in order to set camera according to scene bounds.
   tinygltf::Model model;
   if (!loadGltfFile(model)) {
@@ -227,6 +320,9 @@ int ViewerApplication::run()
     cameraController->setCamera(Camera(eye, centre, up)); cameraController->setSpeed(maxDistance * 3.f);
   }
 
+  // Light object
+  DirectionalLight light { glm::vec3(1.f, 0.f, 0.f), 1.f, glm::vec3(1.f, 0.f, 0.f)};
+  bool useCameraLight = false;
 
   std::vector<GLuint> bufferObjects = createBufferObjects(model);
 
@@ -244,6 +340,21 @@ int ViewerApplication::run()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     const auto viewMatrix = camera.getViewMatrix();
+
+    // update light
+    {
+      const glm::vec4 viewDir = useCameraLight
+          ? glm::vec4(glm::cross(glm::vec3(1.f, 0.f, 0.f), cameraController->getWorldUpAxis()), 0.f)
+            : glm::normalize(viewMatrix * glm::vec4(light.getDirection(), 0.f));
+      const DirectionalLightData data = { viewDir, glm::vec4(light.getRadiance(), 1.f) };
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightBuffer);
+      GLvoid *bufferPtr = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+      assert(bufferPtr);
+      // copy data
+      std::memcpy(bufferPtr, &data, sizeof(DirectionalLightData) * 1);
+      glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
 
     // The recursive function that should draw a node
     // We use a std::function because a simple lambda cannot be recursive
@@ -411,6 +522,38 @@ int ViewerApplication::run()
           }
           cameraController->setCamera(copy);
           useTrackball = !useTrackball;
+        }
+        if (ImGui::CollapsingHeader("Light"))
+        {
+          glm::vec2 euler = light.getEulerAngles();
+          glm::vec3 colourGlm = light.getColour();
+          ImVec4 colour = ImVec4(colourGlm.r, colourGlm.g, colourGlm.b, 0.f);
+          float intensity = light.getIntensity();
+
+          bool hasLightDirChanged = false;
+          hasLightDirChanged |= ImGui::SliderAngle("Theta", &euler.x ,-180.f, 180.f);
+          hasLightDirChanged |= ImGui::SliderAngle("Phi",   &euler.y ,-180.f, 180.f);
+
+          if (hasLightDirChanged)
+          {
+            light.setDirection(euler.x, euler.y);
+          }
+
+          if (ImGui::ColorEdit3("Colour", &colour.x))
+          {
+            colourGlm = glm::vec3(colour.x, colour.y, colour.z);
+            light.setColour(colourGlm);
+          }
+          if (ImGui::SliderFloat("Intensity", &intensity, 0.f, 1.f))
+          {
+            light.setIntensity(intensity);
+          }
+
+          if (ImGui::RadioButton("From Camera", useCameraLight))
+          {
+            useCameraLight = !useCameraLight;
+          }
+
         }
       }
       ImGui::End();
