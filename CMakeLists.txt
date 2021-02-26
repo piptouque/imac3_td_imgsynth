@@ -175,6 +175,7 @@ target_compile_options(
         ${${PROJECT_NAME}_CXX_FLAGS}
        # ${${PROJECT_NAME}_CXX_STANDARD}
 )
+set_property(TARGET ${APP} PROPERTY CXX_STANDARD ${${PROJECT_NAME}_CXX_STANDARD})
 
 if(${CMAKE_VERSION} VERSION_LESS "3.8.0")
     set_property(TARGET ${APP} PROPERTY CXX_STANDARD 14)

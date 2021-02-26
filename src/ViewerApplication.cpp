@@ -46,7 +46,8 @@ namespace {
     return accessor.byteOffset + bufferView.byteOffset;
   }
 
-  class DirectionalLight
+
+class DirectionalLight
   {
   public:
     DirectionalLight() = default;
@@ -232,6 +233,100 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
   return vertexArrayObjects;
 }
 
+GLuint ViewerApplication::createDefaultTextureObject()
+{
+  GLuint textureObject;
+  glGenTextures(1, &textureObject);
+
+  glBindTexture(GL_TEXTURE_2D, textureObject);
+
+  static constexpr const float white[] = { 1.f, 1.f, 1.f, 1.f };
+  // single white pixel.
+  glTexImage2D(
+      GL_TEXTURE_2D,
+      0,
+      GL_RGBA, // internal format
+      1, 1,
+      0, // border
+      GL_RGBA,
+      GL_FLOAT, white
+  );
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  return textureObject;
+}
+
+std::vector<GLuint> ViewerApplication::createTextureObjects(const tinygltf::Model & model)
+{
+  std::vector<GLuint> textureObjects(model.textures.size());
+
+  std::size_t textureIdx = 0;
+  glGenTextures(static_cast<GLsizei>(textureObjects.size()), textureObjects.data());
+
+  static tinygltf::Sampler defaultSampler;
+  {
+    defaultSampler.minFilter = GL_LINEAR;
+    defaultSampler.magFilter = GL_LINEAR;
+    defaultSampler.wrapS = GL_REPEAT;
+    defaultSampler.wrapT = GL_REPEAT;
+    defaultSampler.wrapR = GL_REPEAT;
+  }
+
+  for (const auto & texture : model.textures)
+  {
+    assert(texture.source >= 0);
+
+    const tinygltf::Image & image = model.images.at(
+        static_cast<std::size_t>(texture.source));
+
+    const tinygltf::Sampler & sampler = texture.sampler >= 0
+        ? model.samplers.at(static_cast<std::size_t>(texture.sampler))
+        : defaultSampler;
+
+    // bind and fill.
+    const GLuint textureObject = textureObjects.at(textureIdx);
+    glBindTexture(GL_TEXTURE_2D, textureObject);
+    // fill the texture data on the GPU
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA, // internal format
+        image.width, image.height,
+        0, // border
+        GL_RGBA,
+        image.pixel_type, image.image.data()
+    );
+
+    // setting texture parameters.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sampler.minFilter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.magFilter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.wrapS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.wrapR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, sampler.wrapT);
+
+    // Generate mipmaps if necessary
+    if (sampler.minFilter == GL_NEAREST_MIPMAP_NEAREST
+        || sampler.minFilter == GL_NEAREST_MIPMAP_LINEAR
+        || sampler.minFilter == GL_LINEAR_MIPMAP_NEAREST
+        || sampler.minFilter == GL_LINEAR_MIPMAP_LINEAR)
+    {
+      glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    // unbind!
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    ++textureIdx;
+  }
+  return textureObjects;
+}
+
 void keyCallback(
     GLFWwindow *window, int key, [[maybe_unused]] int scancode,
     int action, [[maybe_unused]] int mods)
@@ -323,6 +418,9 @@ int ViewerApplication::run()
   // Light object
   DirectionalLight light { glm::vec3(1.f, 0.f, 0.f), 1.f, glm::vec3(1.f, 0.f, 0.f)};
   bool useCameraLight = false;
+
+  [[maybe_unused]] GLuint defaultTextureObject = createDefaultTextureObject();
+  std::vector<GLuint> textureObjects = createTextureObjects(model);
 
   std::vector<GLuint> bufferObjects = createBufferObjects(model);
 

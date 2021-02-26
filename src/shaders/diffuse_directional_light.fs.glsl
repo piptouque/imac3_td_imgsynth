@@ -6,7 +6,7 @@ in vec3 vViewSpacePosition;
 in vec3 vViewSpaceNormal;
 in vec2 vTexCoords;
 
-out vec3 fColor;
+out vec3 fColour;
 struct DirectionalLight
 {
    vec4 dir_vs;
@@ -31,4 +31,4 @@ void main()
    vec3 viewNormal = normalize(vViewSpaceNormal);
    vec3 viewDir = - normalize(vViewSpacePosition);
 
-   fColor = computeRadianceDirectional(directional, viewNormal, viewDir); }
+   fColour = computeRadianceDirectional(directional, viewNormal, viewDir); }
