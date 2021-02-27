@@ -118,6 +118,7 @@ class DirectionalLight
   struct MaterialData
   {
     glm::vec4 baseColourFactor;
+    glm::vec4 emissiveFactor;
     glm::float64 metallicFactor;
     glm::float64 roughnessFactor;
   };
@@ -390,7 +391,7 @@ int ViewerApplication::run()
   assert(modelViewProjMatrixLocation      != -1);
   assert(modelViewMatrixLocation          != -1);
   assert(normalMatrixLocation             != -1);
-  // assert(baseTextureLocation              != -1);
+  assert(baseTextureLocation              != -1);
   assert(metallicRoughnessTextureLocation != -1);
   assert(emissionTextureLocation          != -1);
 
@@ -515,6 +516,7 @@ int ViewerApplication::run()
       data.baseColourFactor = glm::make_vec4(roughness.baseColorFactor.data());
       data.metallicFactor = roughness.metallicFactor;
       data.roughnessFactor = roughness.roughnessFactor;
+      data.emissiveFactor = glm::make_vec4(material.emissiveFactor.data());
 
       const int textureIdx = roughness.baseColorTexture.index;
       glActiveTexture(GL_TEXTURE0);
@@ -535,6 +537,14 @@ int ViewerApplication::run()
         glUniform1i(metallicRoughnessTextureLocation, 1);
       }
 
+      const int emissionTextureIdx = material.emissiveTexture.index;
+      if (emissionTextureIdx >= 0)
+      {
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D,
+            textureObjects.at(static_cast<std::size_t>(emissionTextureIdx)) );
+        glUniform1i(emissionTextureLocation, 2);
+      }
     }
     else
     {
