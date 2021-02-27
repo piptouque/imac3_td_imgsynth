@@ -22,7 +22,10 @@ static constexpr GLuint VERTEX_ATTRIB_NORMAL_IDX    = 1;
 static constexpr GLuint VERTEX_ATTRIB_TEXCOORD0_IDX = 2;
 
 static constexpr const char* DIRECTIONALLIGHT_STORAGE_BLOCK_NAME = "sDirectionalLight";
-static constexpr GLuint DIRECTIONALLIGHT_BINDING_INDEX = 1;
+static constexpr GLuint DIRECTIONALLIGHT_STORAGE_BINDING = 1;
+
+static constexpr const char* MATERIAL_UNIFORM_BUFFER_NAME = "bMaterial";
+static constexpr GLuint MATERIAL_BLOCK_BINDING = 1;
 
 namespace {
   const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
@@ -110,6 +113,13 @@ class DirectionalLight
   {
     glm::vec4 viewDir;
     glm::vec4 radiance;
+  };
+
+  struct MaterialData
+  {
+    glm::vec4 baseColourFactor;
+    glm::float64 metallicFactor;
+    glm::float64 roughnessFactor;
   };
 }
 
@@ -350,19 +360,22 @@ int ViewerApplication::run()
       glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
   const auto normalMatrixLocation =
       glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
+  const auto baseTextureLocation =
+      glGetUniformLocation(glslProgram.glId(), "uBaseTexture");
+  const auto metallicRoughnessTextureLocation =
+      glGetUniformLocation(glslProgram.glId(), "uMetallicRoughnessTexture");
 
-
-  GLuint lightBuffer;
+  GLuint lightBufferObject;
   // Light SSBO stuff
   {
-    glGenBuffers(1, &lightBuffer);
+    glGenBuffers(1, &lightBufferObject);
 
     const GLuint lightStorageBlockIndex =
         glGetProgramResourceIndex(glslProgram.glId(), GL_SHADER_STORAGE_BLOCK, "sDirectionalLight");
     assert(lightStorageBlockIndex != GL_INVALID_INDEX);
 
     // Alloc and binding
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightBuffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightBufferObject);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
         static_cast<GLsizeiptr>(sizeof(DirectionalLightData) * 1),
         nullptr,
@@ -372,8 +385,33 @@ int ViewerApplication::run()
 
     // Linking to shader.
     glShaderStorageBlockBinding(glslProgram.glId(), lightStorageBlockIndex,
-        DIRECTIONALLIGHT_BINDING_INDEX);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DIRECTIONALLIGHT_BINDING_INDEX, lightBuffer);
+        DIRECTIONALLIGHT_STORAGE_BINDING);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DIRECTIONALLIGHT_STORAGE_BINDING,
+        lightBufferObject);
+  }
+
+  // material UBO stuff
+  GLuint materialBufferObject;
+  {
+    glGenBuffers(1 , &materialBufferObject);
+
+    // alloc on GPU
+    glBindBuffer(GL_UNIFORM_BUFFER, materialBufferObject);
+    glBufferData(GL_UNIFORM_BUFFER,
+        sizeof(MaterialData),
+        nullptr,
+        GL_DYNAMIC_DRAW
+    );
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    GLuint materialBlockIndex = glGetUniformBlockIndex(glslProgram.glId(),
+        MATERIAL_UNIFORM_BUFFER_NAME);
+
+    assert(materialBlockIndex != GL_INVALID_INDEX);
+
+    glUniformBlockBinding(glslProgram.glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
+
+    glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, materialBufferObject);
   }
 
   // first load the model in order to set camera according to scene bounds.
@@ -398,7 +436,7 @@ int ViewerApplication::run()
 
   auto cameraController = static_cast<std::unique_ptr<CameraController>>(
       std::make_unique<TrackballCameraController>(
-      m_GLFWHandle.window(), 0.5f * maxDistance));
+      m_GLFWHandle.window(), 0.2f * maxDistance));
   bool useTrackball = true;
   if (m_hasUserCamera) {
     cameraController->setCamera(m_userCamera);
@@ -416,10 +454,13 @@ int ViewerApplication::run()
   }
 
   // Light object
-  DirectionalLight light { glm::vec3(1.f, 0.f, 0.f), 1.f, glm::vec3(1.f, 0.f, 0.f)};
+  DirectionalLight light {
+      glm::vec3(1.f, 1.f, 1.f),
+      1.f,
+      glm::vec3(1.f, 0.f, 0.f)};
   bool useCameraLight = false;
 
-  [[maybe_unused]] GLuint defaultTextureObject = createDefaultTextureObject();
+  const GLuint defaultTextureObject = createDefaultTextureObject();
   std::vector<GLuint> textureObjects = createTextureObjects(model);
 
   std::vector<GLuint> bufferObjects = createBufferObjects(model);
@@ -431,6 +472,55 @@ int ViewerApplication::run()
   // Setup OpenGL state for rendering
   glEnable(GL_DEPTH_TEST);
   glslProgram.use();
+
+  const auto bindMaterial = [&](const int materialIndex) {
+    MaterialData data;
+
+    glActiveTexture(GL_TEXTURE0);
+    if (materialIndex >= 0)
+    {
+      // Material binding
+      const tinygltf::Material material = model.materials.at(static_cast<std::size_t>(materialIndex));
+      const tinygltf::PbrMetallicRoughness & roughness = material.pbrMetallicRoughness;
+
+      data.baseColourFactor = glm::make_vec4(roughness.baseColorFactor.data());
+      data.metallicFactor = roughness.metallicFactor;
+      data.roughnessFactor = roughness.roughnessFactor;
+
+      const int textureIdx = roughness.baseColorTexture.index;
+      glBindTexture(GL_TEXTURE_2D, textureIdx >= 0
+         ? textureObjects.at(static_cast<std::size_t>(textureIdx))
+         : defaultTextureObject
+      );
+
+      const int metallicRoughnessTextureIdx = roughness.metallicRoughnessTexture.index;
+
+      if (metallicRoughnessTextureIdx >= 0)
+      {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D,
+            textureObjects.at(static_cast<std::size_t>(metallicRoughnessTextureIdx)));
+        // update
+        glUniform1i(metallicRoughnessTextureLocation, 1);
+      }
+
+    }
+    else
+    {
+      glBindTexture(GL_TEXTURE_2D, defaultTextureObject);
+    }
+
+    // update uniform
+    glUniform1i(baseTextureLocation, 0);
+
+    // update UBO data
+    glBindBuffer(GL_UNIFORM_BUFFER, materialBufferObject);
+    GLvoid *bufferPtr = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
+    std::memcpy(bufferPtr, &data, sizeof(MaterialData));
+    glUnmapBuffer(GL_UNIFORM_BUFFER);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+  };
 
   // Lambda function to draw the scene
   const auto drawScene = [&](const Camera &camera) {
@@ -445,7 +535,7 @@ int ViewerApplication::run()
           ? glm::vec4(glm::cross(glm::vec3(1.f, 0.f, 0.f), cameraController->getWorldUpAxis()), 0.f)
             : glm::normalize(viewMatrix * glm::vec4(light.getDirection(), 0.f));
       const DirectionalLightData data = { viewDir, glm::vec4(light.getRadiance(), 1.f) };
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightBuffer);
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightBufferObject);
       GLvoid *bufferPtr = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
       assert(bufferPtr);
       // copy data
@@ -494,6 +584,8 @@ int ViewerApplication::run()
               const VaoRange vaoRange = meshIndexToVaoRange.at(meshIdx);
               const GLuint vao = vertexArrayObjects.at(
                   static_cast<std::size_t>(vaoRange.begin) + primitiveIdx);
+
+              bindMaterial(primitive.material);
 
               glBindVertexArray(vao);
 
