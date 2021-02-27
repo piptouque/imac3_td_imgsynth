@@ -502,7 +502,9 @@ int ViewerApplication::run()
       glm::vec3(1.f, 1.f, 1.f),
       1.f,
       glm::vec3(1.f, 0.f, 0.f)};
-  bool useCameraLight = false;
+
+  bool useCameraLight = true;
+  bool useOcclusion = true;
 
   const GLuint defaultTextureObject = createDefaultTextureObject();
   std::vector<GLuint> textureObjects = createTextureObjects(model);
@@ -529,7 +531,7 @@ int ViewerApplication::run()
       data.metallicFactor = roughness.metallicFactor;
       data.roughnessFactor = roughness.roughnessFactor;
       data.emissiveFactor = glm::make_vec4(material.emissiveFactor.data());
-      data.occlusionStrength = material.occlusionTexture.strength;
+      data.occlusionStrength = useOcclusion ? material.occlusionTexture.strength : 0.f;
 
       const int textureIdx = roughness.baseColorTexture.index;
       glActiveTexture(GL_TEXTURE0);
@@ -752,7 +754,7 @@ int ViewerApplication::run()
           const auto str = ss.str();
           glfwSetClipboardString(m_GLFWHandle.window(), str.c_str());
         }
-        if (ImGui::RadioButton("Toggle Trackball", useTrackball)) {
+        if (ImGui::RadioButton("Use Trackball", useTrackball)) {
           Camera copy = cameraController->getCamera();
           if (useTrackball) {
             cameraController = std::make_unique<FirstPersonCameraController>(
@@ -788,6 +790,11 @@ int ViewerApplication::run()
             light.setDirection(euler.x, euler.y);
           }
 
+          if (ImGui::RadioButton("From Camera", useCameraLight))
+          {
+            useCameraLight = !useCameraLight;
+          }
+
           if (ImGui::ColorEdit3("Colour", &colour.x))
           {
             colourGlm = glm::vec3(colour.x, colour.y, colour.z);
@@ -798,10 +805,11 @@ int ViewerApplication::run()
             light.setIntensity(intensity);
           }
 
-          if (ImGui::RadioButton("From Camera", useCameraLight))
+          if (ImGui::RadioButton("Use occlusions", useOcclusion))
           {
-            useCameraLight = !useCameraLight;
+            useOcclusion = !useOcclusion;
           }
+
 
         }
       }

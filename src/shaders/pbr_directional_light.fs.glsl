@@ -16,9 +16,9 @@ struct PBRMaterial
 {
    vec4 baseColourFactor;
    vec4 emissiveFactor;
-   float metallicFactor;
-   float roughnessFactor;
-   float occlusionStrength;
+   double metallicFactor;
+   double roughnessFactor;
+   double occlusionStrength;
 };
 
 layout(std430) buffer sDirectionalLight
@@ -99,7 +99,7 @@ void main()
 
    const float occlusion = texture(uOcclusionTexture, vTexCoords).r;
 
-   const float roughness = metallicRoughness.g * material.roughnessFactor;
+   const float roughness = metallicRoughness.g * float(material.roughnessFactor);
    const float metallic  = metallicRoughness.b;
 
    // some preliminary computations
@@ -122,16 +122,18 @@ void main()
 
    const vec3 colourDiff = mix(baseColour * (1 - DIELECTRIC_SPECULAR), black, metallic);
 
-   const vec3 diffuseColour  = (1 - F) * colourDiff;
-   const vec3 specularColour = F;
+   vec3 diffuseColour  = (1 - F) * colourDiff;
+   vec3 specularColour = F;
 
-   const vec3 diffuseBrdf   = diffuseColour * computeDiffuseBrdf();
-   const vec3 specularBrdf = specularColour * computeSpecularBrdf(NdotL, NdotV, NdotH, HdotL, HdotV, alphaSquared);
 
-   const vec3 totalBrdf = diffuseBrdf + specularBrdf;
+   // Apply bidirectional reflectance distribution functions (BRDF)
+   diffuseColour   *= computeDiffuseBrdf();
+   specularColour  *= computeSpecularBrdf(NdotL, NdotV, NdotH, HdotL, HdotV, alphaSquared);
 
-   const vec3 indirectColour = totalBrdf * directional.radiance.rgb * NdotL;
-   vec3 occludedColour = mix(indirectColour, indirectColour * occlusion, material.occlusionStrength);
+   // Only diffuse indirect lighting should be affected by ambient occlusion.
+   const vec3 occludedDiffuseColour = mix(diffuseColour, diffuseColour * occlusion, float(material.occlusionStrength));
 
-   fColour = LINEARtoSRGB(occludedColour + emissiveColour);
+   vec3 indirectColour = (occludedDiffuseColour + specularColour) * directional.radiance.rgb * NdotL;
+
+   fColour = LINEARtoSRGB(indirectColour + emissiveColour);
 }
