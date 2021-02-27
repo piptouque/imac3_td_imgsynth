@@ -85,15 +85,15 @@ void main()
    const vec3 H = normalize(L + V);
 
     // colours
-   vec4 baseColour = SRGBtoLINEAR(texture(uBaseTexture, vTexCoords));
-   baseColour *= material.baseColourFactor;
+   vec3 baseColour = SRGBtoLINEAR(texture(uBaseTexture, vTexCoords)).rgb;
+   baseColour *= material.baseColourFactor.rgb;
 
    vec3 emissiveColour = SRGBtoLINEAR(texture(uEmissiveTexture, vTexCoords)).rgb;
    emissiveColour *= material.emissiveFactor.rgb;
 
    // roughness and metal
-   vec4 metallicRoughness = texture(uMetallicRoughnessTexture, vTexCoords);
-   metallicRoughness *= vec4(1.f, material.roughnessFactor, material.metallicFactor, 1.f);
+   vec3 metallicRoughness = texture(uMetallicRoughnessTexture, vTexCoords).rgb;
+   metallicRoughness *= vec3(1.f, material.roughnessFactor, material.metallicFactor);
 
    const float roughness = metallicRoughness.g * material.roughnessFactor;
    const float metallic  = metallicRoughness.b;
@@ -112,18 +112,17 @@ void main()
    float alphaSquared = roughness * roughness;
    alphaSquared *= alphaSquared;
 
-   //
    const vec3 black = vec3(0.f);
-   const vec3 f0 = mix(DIELECTRIC_SPECULAR, baseColour.rgb, metallic);
+   const vec3 f0 = mix(DIELECTRIC_SPECULAR, baseColour, metallic);
    const vec3 F = f0 + (1 - f0) * (1 - abs(shlickFactor));
 
-   const vec3 colourDiff = mix(baseColour.rgb * (1 - DIELECTRIC_SPECULAR), black, metallic);
+   const vec3 colourDiff = mix(baseColour * (1 - DIELECTRIC_SPECULAR), black, metallic);
 
    const vec3 diffuseColour  = (1 - F) * colourDiff;
    const vec3 specularColour = F;
 
-   const vec3 diffuseBrdf   = computeDiffuseBrdf();
-   const vec3 specularBrdf = computeSpecularBrdf(NdotL, NdotV, NdotH, HdotL, HdotV, alphaSquared);
+   const vec3 diffuseBrdf   = diffuseColour * computeDiffuseBrdf();
+   const vec3 specularBrdf = specularColour * computeSpecularBrdf(NdotL, NdotV, NdotH, HdotL, HdotV, alphaSquared);
 
    const vec3 totalBrdf = diffuseBrdf + specularBrdf;
 

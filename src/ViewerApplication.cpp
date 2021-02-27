@@ -27,6 +27,13 @@ static constexpr GLuint DIRECTIONALLIGHT_STORAGE_BINDING = 1;
 static constexpr const char* MATERIAL_UNIFORM_BUFFER_NAME = "bMaterial";
 static constexpr GLuint MATERIAL_BLOCK_BINDING = 1;
 
+static constexpr const char* MVP_MATRIX_UNIFORM_NAME = "uModelViewProjMatrix";
+static constexpr const char* MV_MATRIX_UNIFORM_NAME = "uModelViewMatrix";
+static constexpr const char* N_MATRIX_UNIFORM_NAME = "uNormalMatrix";
+static constexpr const char* BASE_TEX_UNIFORM_NAME = "uBaseTexture";
+static constexpr const char* MR_TEX_UNIFORM_NAME = "uMetallicRoughnessTexture";
+static constexpr const char* EM_TEX_UNIFORM_NAME = "uEmissiveTexture";
+
 namespace {
   const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
     return model.accessors.at(static_cast<std::size_t>(accessorIdx));
@@ -333,6 +340,7 @@ std::vector<GLuint> ViewerApplication::createTextureObjects(tinygltf::Model & mo
         image.pixel_type, image.image.data()
     );
 
+
     // setting texture parameters.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sampler.minFilter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.magFilter);
@@ -374,17 +382,17 @@ int ViewerApplication::run()
           m_ShadersRootPath / m_fragmentShader});
 
   const auto modelViewProjMatrixLocation =
-      glGetUniformLocation(glslProgram.glId(), "uModelViewProjMatrix");
+      glGetUniformLocation(glslProgram.glId(), MVP_MATRIX_UNIFORM_NAME);
   const auto modelViewMatrixLocation =
-      glGetUniformLocation(glslProgram.glId(), "uModelViewMatrix");
+      glGetUniformLocation(glslProgram.glId(), MV_MATRIX_UNIFORM_NAME);
   const auto normalMatrixLocation =
-      glGetUniformLocation(glslProgram.glId(), "uNormalMatrix");
+      glGetUniformLocation(glslProgram.glId(), N_MATRIX_UNIFORM_NAME);
   const auto baseTextureLocation =
-      glGetUniformLocation(glslProgram.glId(), "uBaseTexture");
+      glGetUniformLocation(glslProgram.glId(), BASE_TEX_UNIFORM_NAME);
   const auto metallicRoughnessTextureLocation =
-      glGetUniformLocation(glslProgram.glId(), "uMetallicRoughnessTexture");
+      glGetUniformLocation(glslProgram.glId(), MR_TEX_UNIFORM_NAME);
   const auto emissionTextureLocation =
-      glGetUniformLocation(glslProgram.glId(), "uEmissiveTexture");
+      glGetUniformLocation(glslProgram.glId(), EM_TEX_UNIFORM_NAME);
 
   // all of this should be defined in the shaders
   // (and used, otherwise they get compiled-out.)
@@ -401,7 +409,7 @@ int ViewerApplication::run()
     glGenBuffers(1, &lightBufferObject);
 
     const GLuint lightStorageBlockIndex =
-        glGetProgramResourceIndex(glslProgram.glId(), GL_SHADER_STORAGE_BLOCK, "sDirectionalLight");
+        glGetProgramResourceIndex(glslProgram.glId(), GL_SHADER_STORAGE_BLOCK, DIRECTIONALLIGHT_STORAGE_BLOCK_NAME);
     assert(lightStorageBlockIndex != GL_INVALID_INDEX);
 
     // Alloc and binding
@@ -478,7 +486,7 @@ int ViewerApplication::run()
     const glm::vec3 eye = centre
           + (isSceneFlatOnZaxis
               ? diag
-              : glm::cross(diag, up) * 2.f);
+              : glm::cross(diag, up) * 0.75f);
 
     cameraController->setCamera(Camera(eye, centre, up));
     cameraController->setSpeed(maxDistance * 0.2f);
