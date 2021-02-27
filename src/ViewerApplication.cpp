@@ -273,7 +273,7 @@ GLuint ViewerApplication::createDefaultTextureObject()
   return textureObject;
 }
 
-std::vector<GLuint> ViewerApplication::createTextureObjects(const tinygltf::Model & model)
+std::vector<GLuint> ViewerApplication::createTextureObjects(tinygltf::Model & model)
 {
   std::vector<GLuint> textureObjects(model.textures.size());
 
@@ -296,9 +296,27 @@ std::vector<GLuint> ViewerApplication::createTextureObjects(const tinygltf::Mode
     const tinygltf::Image & image = model.images.at(
         static_cast<std::size_t>(texture.source));
 
-    const tinygltf::Sampler & sampler = texture.sampler >= 0
+    tinygltf::Sampler & sampler = texture.sampler >= 0
         ? model.samplers.at(static_cast<std::size_t>(texture.sampler))
         : defaultSampler;
+
+    // all of these are optional.
+    if (sampler.minFilter < 0) {
+      sampler.minFilter = defaultSampler.minFilter;
+    }
+    if (sampler.magFilter < 0) {
+      sampler.magFilter = defaultSampler.magFilter;
+    }
+    if (sampler.wrapS < 0) {
+      sampler.wrapS = defaultSampler.wrapS;
+    }
+    if (sampler.wrapR < 0) {
+      sampler.wrapR = defaultSampler.wrapR;
+    }
+    if (sampler.wrapT < 0) {
+      sampler.wrapT = defaultSampler.wrapT;
+    }
+
 
     // bind and fill.
     const GLuint textureObject = textureObjects.at(textureIdx);
@@ -364,6 +382,17 @@ int ViewerApplication::run()
       glGetUniformLocation(glslProgram.glId(), "uBaseTexture");
   const auto metallicRoughnessTextureLocation =
       glGetUniformLocation(glslProgram.glId(), "uMetallicRoughnessTexture");
+  const auto emissionTextureLocation =
+      glGetUniformLocation(glslProgram.glId(), "uEmissiveTexture");
+
+  // all of this should be defined in the shaders
+  // (and used, otherwise they get compiled-out.)
+  assert(modelViewProjMatrixLocation      != -1);
+  assert(modelViewMatrixLocation          != -1);
+  assert(normalMatrixLocation             != -1);
+  // assert(baseTextureLocation              != -1);
+  assert(metallicRoughnessTextureLocation != -1);
+  assert(emissionTextureLocation          != -1);
 
   GLuint lightBufferObject;
   // Light SSBO stuff
@@ -400,7 +429,7 @@ int ViewerApplication::run()
     glBufferData(GL_UNIFORM_BUFFER,
         sizeof(MaterialData),
         nullptr,
-        GL_DYNAMIC_DRAW
+        GL_DYNAMIC_READ
     );
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
@@ -436,7 +465,7 @@ int ViewerApplication::run()
 
   auto cameraController = static_cast<std::unique_ptr<CameraController>>(
       std::make_unique<TrackballCameraController>(
-      m_GLFWHandle.window(), 0.2f * maxDistance));
+      m_GLFWHandle.window()));
   bool useTrackball = true;
   if (m_hasUserCamera) {
     cameraController->setCamera(m_userCamera);
@@ -450,7 +479,8 @@ int ViewerApplication::run()
               ? diag
               : glm::cross(diag, up) * 2.f);
 
-    cameraController->setCamera(Camera(eye, centre, up)); cameraController->setSpeed(maxDistance * 3.f);
+    cameraController->setCamera(Camera(eye, centre, up));
+    cameraController->setSpeed(maxDistance * 0.2f);
   }
 
   // Light object
@@ -476,7 +506,6 @@ int ViewerApplication::run()
   const auto bindMaterial = [&](const int materialIndex) {
     MaterialData data;
 
-    glActiveTexture(GL_TEXTURE0);
     if (materialIndex >= 0)
     {
       // Material binding
@@ -488,13 +517,15 @@ int ViewerApplication::run()
       data.roughnessFactor = roughness.roughnessFactor;
 
       const int textureIdx = roughness.baseColorTexture.index;
+      glActiveTexture(GL_TEXTURE0);
       glBindTexture(GL_TEXTURE_2D, textureIdx >= 0
          ? textureObjects.at(static_cast<std::size_t>(textureIdx))
          : defaultTextureObject
       );
+      // update
+      glUniform1i(baseTextureLocation, 0);
 
       const int metallicRoughnessTextureIdx = roughness.metallicRoughnessTexture.index;
-
       if (metallicRoughnessTextureIdx >= 0)
       {
         glActiveTexture(GL_TEXTURE1);
@@ -507,11 +538,11 @@ int ViewerApplication::run()
     }
     else
     {
+      glActiveTexture(GL_TEXTURE0);
       glBindTexture(GL_TEXTURE_2D, defaultTextureObject);
+      glUniform1i(baseTextureLocation, 0);
     }
 
-    // update uniform
-    glUniform1i(baseTextureLocation, 0);
 
     // update UBO data
     glBindBuffer(GL_UNIFORM_BUFFER, materialBufferObject);

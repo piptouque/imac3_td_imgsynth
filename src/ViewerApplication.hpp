@@ -39,7 +39,8 @@ private:
       const tinygltf::Model & model,
       const std::vector<GLuint> & bufferObjects,
       std::vector<VaoRange> & meshIndexToVaoRange);
-  [[nodiscard]] static std::vector<GLuint> createTextureObjects(const tinygltf::Model & model);
+  // This function might set texture sampler parameters if not specified.
+  [[nodiscard]] static std::vector<GLuint> createTextureObjects(tinygltf::Model & model);
   [[nodiscard]] static GLuint createDefaultTextureObject();
 
   GLsizei m_nWindowWidth = 1280;
