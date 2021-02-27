@@ -165,7 +165,7 @@ public:
 
   [[nodiscard]] float getSpeed() const { return m_fSpeed; }
 
-  void increaseSpeed(float delta)
+  void addSpeed(float delta)
   {
     m_fSpeed += delta;
     m_fSpeed = glm::max(m_fSpeed, 0.f);
