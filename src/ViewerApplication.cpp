@@ -33,6 +33,7 @@ static constexpr const char* N_MATRIX_UNIFORM_NAME = "uNormalMatrix";
 static constexpr const char* BASE_TEX_UNIFORM_NAME = "uBaseTexture";
 static constexpr const char* MR_TEX_UNIFORM_NAME = "uMetallicRoughnessTexture";
 static constexpr const char* EM_TEX_UNIFORM_NAME = "uEmissiveTexture";
+static constexpr const char* OC_TEX_UNIFORM_NAME = "uOcclusionTexture";
 
 namespace {
   const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
@@ -128,6 +129,7 @@ class DirectionalLight
     glm::vec4 emissiveFactor;
     glm::float64 metallicFactor;
     glm::float64 roughnessFactor;
+    glm::float64 occlusionStrength;
   };
 }
 
@@ -393,6 +395,8 @@ int ViewerApplication::run()
       glGetUniformLocation(glslProgram.glId(), MR_TEX_UNIFORM_NAME);
   const auto emissionTextureLocation =
       glGetUniformLocation(glslProgram.glId(), EM_TEX_UNIFORM_NAME);
+  const auto occlusionTextureLocation =
+      glGetUniformLocation(glslProgram.glId(), OC_TEX_UNIFORM_NAME);
 
   // all of this should be defined in the shaders
   // (and used, otherwise they get compiled-out.)
@@ -402,6 +406,7 @@ int ViewerApplication::run()
   assert(baseTextureLocation              != -1);
   assert(metallicRoughnessTextureLocation != -1);
   assert(emissionTextureLocation          != -1);
+  assert(occlusionTextureLocation          != -1);
 
   GLuint lightBufferObject;
   // Light SSBO stuff
@@ -515,8 +520,7 @@ int ViewerApplication::run()
   const auto bindMaterial = [&](const int materialIndex) {
     MaterialData data;
 
-    if (materialIndex >= 0)
-    {
+    if (materialIndex >= 0) {
       // Material binding
       const tinygltf::Material material = model.materials.at(static_cast<std::size_t>(materialIndex));
       const tinygltf::PbrMetallicRoughness & roughness = material.pbrMetallicRoughness;
@@ -525,6 +529,7 @@ int ViewerApplication::run()
       data.metallicFactor = roughness.metallicFactor;
       data.roughnessFactor = roughness.roughnessFactor;
       data.emissiveFactor = glm::make_vec4(material.emissiveFactor.data());
+      data.occlusionStrength = material.occlusionTexture.strength;
 
       const int textureIdx = roughness.baseColorTexture.index;
       glActiveTexture(GL_TEXTURE0);
@@ -536,8 +541,7 @@ int ViewerApplication::run()
       glUniform1i(baseTextureLocation, 0);
 
       const int metallicRoughnessTextureIdx = roughness.metallicRoughnessTexture.index;
-      if (metallicRoughnessTextureIdx >= 0)
-      {
+      if (metallicRoughnessTextureIdx >= 0) {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D,
             textureObjects.at(static_cast<std::size_t>(metallicRoughnessTextureIdx)));
@@ -546,12 +550,18 @@ int ViewerApplication::run()
       }
 
       const int emissionTextureIdx = material.emissiveTexture.index;
-      if (emissionTextureIdx >= 0)
-      {
+      if (emissionTextureIdx >= 0) {
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D,
-            textureObjects.at(static_cast<std::size_t>(emissionTextureIdx)) );
+            textureObjects.at(static_cast<std::size_t>(emissionTextureIdx)));
         glUniform1i(emissionTextureLocation, 2);
+      }
+      const int occlusionTextureIdx = material.occlusionTexture.index;
+      if (occlusionTextureIdx >= 0) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D,
+            textureObjects.at(static_cast<std::size_t>(occlusionTextureIdx)));
+        glUniform1i(occlusionTextureLocation, 3);
       }
     }
     else

@@ -18,6 +18,7 @@ struct PBRMaterial
    vec4 emissiveFactor;
    float metallicFactor;
    float roughnessFactor;
+   float occlusionStrength;
 };
 
 layout(std430) buffer sDirectionalLight
@@ -33,6 +34,7 @@ layout(std140) uniform bMaterial
 uniform sampler2D uBaseTexture;
 uniform sampler2D uMetallicRoughnessTexture;
 uniform sampler2D uEmissiveTexture;
+uniform sampler2D uOcclusionTexture;
 
 const float GAMMA = 2.2;
 const float INV_GAMMA = 1.0 / GAMMA;
@@ -95,6 +97,8 @@ void main()
    vec3 metallicRoughness = texture(uMetallicRoughnessTexture, vTexCoords).rgb;
    metallicRoughness *= vec3(1.f, material.roughnessFactor, material.metallicFactor);
 
+   const float occlusion = texture(uOcclusionTexture, vTexCoords).r;
+
    const float roughness = metallicRoughness.g * material.roughnessFactor;
    const float metallic  = metallicRoughness.b;
 
@@ -126,5 +130,8 @@ void main()
 
    const vec3 totalBrdf = diffuseBrdf + specularBrdf;
 
-   fColour = LINEARtoSRGB(totalBrdf * directional.radiance.rgb * NdotL + emissiveColour);
+   const vec3 indirectColour = totalBrdf * directional.radiance.rgb * NdotL;
+   vec3 occludedColour = mix(indirectColour, indirectColour * occlusion, material.occlusionStrength);
+
+   fColour = LINEARtoSRGB(occludedColour + emissiveColour);
 }
