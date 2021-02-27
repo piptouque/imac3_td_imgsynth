@@ -22,12 +22,15 @@ set(GLM_DIR glm-0.9.9.7)
 set(GLAD_DIR glad)
 set(TINYGLTF_DIR tinygltf-bcf2ce586ee8bf2a2a816afa6bfe2f8692ba6ac2)
 set(ARGS_DIR args-6.2.2)
+set(CANTINACOMMON_DIR cantina_common)
 
 # Add GLFW subdirectory, set some options to OFF by default (the user can still enable them by modifying its CMakeCache.txt)
 option(GLFW_BUILD_DOCS OFF)
 option(GLFW_BUILD_TESTS OFF)
 option(GLFW_BUILD_EXAMPLES OFF)
 add_subdirectory(third-party/${GLFW_DIR})
+
+add_subdirectory(third-party/${CANTINACOMMON_DIR})
 
 if(${CMAKE_VERSION} VERSION_LESS "3.10.0")
     set(OpenGL_GL_PREFERENCE LEGACY)
@@ -83,6 +86,7 @@ set(
     third-party/${IMGUI_DIR}/examples/
     third-party/${TINYGLTF_DIR}/include
     third-party/${ARGS_DIR}
+    ${CANTINA_COMMON_INCLUDE_DIRS}
     lib/include
 )
 

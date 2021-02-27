@@ -1,3 +1,6 @@
 [submodule "modules"]
 	path = modules
 	url = https://github.com/piptouque/pip_templates.git
+[submodule "third-party/cantina_common"]
+	path = third-party/cantina_common
+	url = https://github.com/cantina-lib/cantina_common.git

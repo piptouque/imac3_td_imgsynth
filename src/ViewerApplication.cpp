@@ -15,6 +15,15 @@
 #include <stb_image_write.h>
 #include <tiny_gltf.h>
 
+#include <cant/physics/PhysicsSimulation.hpp>
+#include <cant/physics/HookSpringLink.hpp>
+
+using Simulation = cant::physics::PhysicsSimulation<double, double, double, 1>;
+using Object = Simulation::Object;
+using Force = Simulation::Force;
+
+using HookSpring = cant::physics::HookSpringLink<double, double, double, 1>;
+
 // TD
 
 static constexpr GLuint VERTEX_ATTRIB_POSITION_IDX  = 0;
@@ -505,6 +514,24 @@ int ViewerApplication::run()
 
   bool useCameraLight = true;
   bool useOcclusion = true;
+
+  // Physics
+
+  double m = 1.0; // mass
+  double k = 20.0;
+  double l0 = 0.5;
+
+  Simulation simulation;
+
+  auto o1 = std::make_shared<Object>(m);
+  auto o2 = std::make_shared<Object>(m);
+
+  simulation.addKinematicObject(o1);
+  simulation.addKinematicObject(o2);
+
+  auto spring = static_cast<std::unique_ptr<Force>>(std::make_unique<HookSpring>(k, l0, o1, o2));
+
+  simulation.addForce(std::move(spring));
 
   const GLuint defaultTextureObject = createDefaultTextureObject();
   std::vector<GLuint> textureObjects = createTextureObjects(model);
