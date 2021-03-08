@@ -125,7 +125,6 @@ void main()
    vec3 diffuseColour  = (1 - F) * colourDiff;
    vec3 specularColour = F;
 
-
    // Apply bidirectional reflectance distribution functions (BRDF)
    diffuseColour   *= computeDiffuseBrdf();
    specularColour  *= computeSpecularBrdf(NdotL, NdotV, NdotH, HdotL, HdotV, alphaSquared);

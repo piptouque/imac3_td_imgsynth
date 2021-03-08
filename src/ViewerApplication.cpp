@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <numeric>
+#include <random>
+#include <exception>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -15,14 +17,20 @@
 #include <stb_image_write.h>
 #include <tiny_gltf.h>
 
+#include <cant/physics/HookeSpringLink.hpp>
+#include <cant/physics/UniformForceField.hpp>
 #include <cant/physics/PhysicsSimulation.hpp>
-#include <cant/physics/HookSpringLink.hpp>
 
-using Simulation = cant::physics::PhysicsSimulation<double, double, double, 1>;
+using Simulation = cant::physics::PhysicsSimulation<double, double, double, 3>;
 using Object = Simulation::Object;
 using Force = Simulation::Force;
+using ForceField = Simulation::ForceField;
 
-using HookSpring = cant::physics::HookSpringLink<double, double, double, 1>;
+using HookSpring = cant::physics::HookeSpringLink<double, double, double, 3>;
+using Gravity = cant::physics::UniformForceField<double, double, double, 3>;
+
+using RandomGenerator = std::default_random_engine;
+using UniformDoubleDist = std::uniform_real_distribution<double>;
 
 // TD
 
@@ -145,9 +153,22 @@ class DirectionalLight
 bool ViewerApplication::loadGltfFile(tinygltf::Model & model) const {
   tinygltf::TinyGLTF loader;
   std::string err, warn;
-  bool success = loader.LoadASCIIFromFile(
-      &model, &err, &warn,
-      m_gltfFilePath.string());
+  bool success;
+  const std::string filePath = m_gltfFilePath.string();
+  if (m_gltfFilePath.has_extension() && m_gltfFilePath.extension().string() == ".glb")
+  {
+    // Load as binary
+    success = loader.LoadBinaryFromFile(
+        &model, &err, &warn,
+        filePath);
+  }
+  else
+  {
+    // load as text.
+    success = loader.LoadASCIIFromFile(
+        &model, &err, &warn,
+        filePath);
+  }
   if (!err.empty()) {
     std::cerr << "Error while parsing GLTF file: " << err << std::endl;
   }
@@ -473,6 +494,41 @@ int ViewerApplication::run()
     return 1;
   }
 
+  // init random
+  unsigned int seed;
+  try
+  {
+    std::random_device rd;
+    seed = rd();
+  }
+  catch (std::exception & e)
+  {
+    // random device is not available.
+    seed = static_cast<unsigned int>(std::chrono::system_clock::now().time_since_epoch().count());
+  }
+  RandomGenerator rng(seed);
+  UniformDoubleDist dist;
+
+  // the objects
+  double m = 1.0; // mass
+  std::size_t numberSpheres = 1;
+  std::vector<std::shared_ptr<Object>> spheres;
+  spheres.reserve(numberSpheres);
+  {
+    // auto par = dist.param();
+    auto par = UniformDoubleDist ::param_type(
+        - static_cast<double>(numberSpheres) / 2.0,
+        static_cast<double>(numberSpheres) / 2.0
+                                             );
+    dist.param(par);
+    auto random = std::bind(dist, rng);
+    for (std::size_t i = 0; i < numberSpheres; ++i)
+    {
+      Object::Position pos = { random(), random(), random() };
+      spheres.push_back(std::make_shared<Object>(m, pos));
+    }
+  }
+
   // Build projection matrix
   glm::vec3 bboxMin, bboxMax;
   computeSceneBounds(model, bboxMin, bboxMax);
@@ -484,7 +540,8 @@ int ViewerApplication::run()
   const auto projMatrix =
       glm::perspective(70.f,
           static_cast<float>(m_nWindowWidth) / static_cast<float>(m_nWindowHeight),
-          0.001f * maxDistance, 1.5f * maxDistance);
+          0.001f * maxDistance,
+          1.5f * maxDistance * static_cast<float>(numberSpheres));
 
   auto cameraController = static_cast<std::unique_ptr<CameraController>>(
       std::make_unique<TrackballCameraController>(
@@ -515,23 +572,39 @@ int ViewerApplication::run()
   bool useCameraLight = true;
   bool useOcclusion = true;
 
+
   // Physics
 
-  double m = 1.0; // mass
-  double k = 20.0;
-  double l0 = 0.5;
+  Force::DeltaForce gravityVec = { 0.0, - 9.81, 0.0 };
 
   Simulation simulation;
 
+  // -- objects
+  for (auto & obj : spheres)
+  {
+    simulation.addKinematicObject(obj);
+  }
+
+  /*
   auto o1 = std::make_shared<Object>(m);
   auto o2 = std::make_shared<Object>(m);
 
   simulation.addKinematicObject(o1);
   simulation.addKinematicObject(o2);
 
-  auto spring = static_cast<std::unique_ptr<Force>>(std::make_unique<HookSpring>(k, l0, o1, o2));
+  // -- forces
 
+  double k = 20.0;
+  double l0 = 0.5;
+
+  auto spring = static_cast<std::unique_ptr<Force>>(std::make_unique<HookSpring>(k, l0, o1, o2));
   simulation.addForce(std::move(spring));
+   */
+
+  auto gravity = std::make_unique<Gravity>(gravityVec);
+  simulation.addForceField(std::move(gravity));
+
+  //
 
   const GLuint defaultTextureObject = createDefaultTextureObject();
   std::vector<GLuint> textureObjects = createTextureObjects(model);
@@ -712,10 +785,17 @@ int ViewerApplication::run()
     if (model.defaultScene >= 0) {
       const auto sceneIdx = static_cast<std::size_t>(model.defaultScene);
       const auto & nodes = model.scenes[sceneIdx].nodes;
-      std::for_each(nodes.cbegin(), nodes.cend(),
-        [&](int nodeIdx) -> void {
-          drawNode(nodeIdx, glm::identity<glm::mat4>());
-      });
+      for (const auto & obj : spheres)
+      {
+        auto pos = obj->getPosition();
+        glm::mat4 const rootModelMatrix = glm::translate(
+            glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
+            );
+        std::for_each(nodes.cbegin(), nodes.cend(),
+                      [&](int nodeIdx) -> void {
+                        drawNode(nodeIdx, rootModelMatrix);
+                      });
+      }
 
     }
   };
@@ -852,7 +932,10 @@ int ViewerApplication::run()
         ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard;
     if (!guiHasFocus) {
       cameraController->update(float(ellapsedTime));
+      // update physics.
+      simulation.stepDelta(ellapsedTime);
     }
+
 
     m_GLFWHandle.swapBuffers(); // Swap front and back buffers
   }
