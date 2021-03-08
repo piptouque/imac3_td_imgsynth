@@ -21,13 +21,13 @@
 #include <cant/physics/UniformForceField.hpp>
 #include <cant/physics/PhysicsSimulation.hpp>
 
-using Simulation = cant::physics::PhysicsSimulation<double, double, double, 3>;
+using Simulation = cant::physics::PhysicsSimulation<3, double>;
 using Object = Simulation::Object;
 using Force = Simulation::Force;
 using ForceField = Simulation::ForceField;
 
-using HookSpring = cant::physics::HookeSpringLink<double, double, double, 3>;
-using Gravity = cant::physics::UniformForceField<double, double, double, 3>;
+using HookSpring = cant::physics::HookeSpringLink<3, double>;
+using Gravity = cant::physics::UniformForceField<3, double>;
 
 using RandomGenerator = std::default_random_engine;
 using UniformDoubleDist = std::uniform_real_distribution<double>;
@@ -96,7 +96,7 @@ class DirectionalLight
     void setDirection(glm::vec3 a_dir)
     {
       m_dir = a_dir;
-      const glm::vec3 euler = computeEulerAngles(m_dir);
+      const glm::vec2 euler = computeEulerAngles(m_dir);
       m_theta = euler.x;
       m_phi = euler.y;
     }
@@ -114,13 +114,16 @@ class DirectionalLight
       const float sinTheta = glm::sin(theta);
       return glm::vec3(sinTheta * glm::cos(phi),
                         glm::cos(theta),
-                        glm::sin(theta) * glm::sin(phi));
+                        sinTheta * glm::sin(phi));
     }
 
-    [[nodiscard]] static glm::vec3 computeEulerAngles(glm::vec3 dir)
+    [[nodiscard]] static glm::vec2 computeEulerAngles(glm::vec3 dir)
     {
-      const glm::quat quat = glm::rotation(glm::vec3(), dir);
-      return glm::eulerAngles(quat);
+      // Not good.
+      const float theta = glm::acos(dir.y);
+      const float sinTheta = glm::sin(theta);
+      const float phi = glm::acos(dir.x / sinTheta);
+      return glm::vec2(theta, phi);
     }
 
   private:
@@ -575,7 +578,11 @@ int ViewerApplication::run()
 
   // Physics
 
-  Force::DeltaForce gravityVec = { 0.0, - 9.81, 0.0 };
+  bool enabledPhysicsUpdate = false;
+  double h = 0.05;
+
+  Force::Vector gravityDir = { 0.0, - 1.0, 0.0 };
+  double gravityStrength = 9.81;
 
   Simulation simulation;
 
@@ -597,15 +604,15 @@ int ViewerApplication::run()
   double k = 20.0;
   double l0 = 0.5;
 
-  auto spring = static_cast<std::unique_ptr<Force>>(std::make_unique<HookSpring>(k, l0, o1, o2));
-  simulation.addForce(std::move(spring));
+   // fixme: for some reason I need to cast it to Force outside of addForce.
+  auto spring = static_cast<std::shared_ptr<Force>>(std::make_shared<HookSpring>(k, l0, o1, o2));
+  simulation.addForce(spring);
    */
 
-  auto gravity = std::make_unique<Gravity>(gravityVec);
-  simulation.addForceField(std::move(gravity));
+  auto gravity = std::make_shared<Gravity>(gravityDir * gravityStrength);
+  simulation.addForceField(gravity);
 
   //
-
   const GLuint defaultTextureObject = createDefaultTextureObject();
   std::vector<GLuint> textureObjects = createTextureObjects(model);
 
@@ -824,10 +831,24 @@ int ViewerApplication::run()
     return 0;
   }
 
+  double accH = 0.0;
+  double time = glfwGetTime();
   // Loop until the user closes the window
   for (auto iterationCount = 0u; !m_GLFWHandle.shouldClose();
        ++iterationCount) {
-    const auto seconds = glfwGetTime();
+    const double currentTime = glfwGetTime();
+    const double deltaTime = currentTime - time;
+    time = currentTime;
+
+    if (enabledPhysicsUpdate)
+    {
+      accH += deltaTime;
+      if (accH >= h) {
+        // update physics.
+        simulation.stepDelta(accH);
+        accH = 0.0;
+      }
+    }
 
     const auto camera = cameraController->getCamera();
     drawScene(camera);
@@ -839,7 +860,7 @@ int ViewerApplication::run()
       ImGui::Begin("GUI");
       ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
           1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-      if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (ImGui::CollapsingHeader("Camera")) {
         ImGui::Text("eye: %.3f %.3f %.3f", camera.eye().x, camera.eye().y,
             camera.eye().z);
         ImGui::Text("center: %.3f %.3f %.3f", camera.center().x,
@@ -865,59 +886,80 @@ int ViewerApplication::run()
           Camera copy = cameraController->getCamera();
           if (useTrackball) {
             cameraController = std::make_unique<FirstPersonCameraController>(
-                m_GLFWHandle.window(),
-                cameraController->getSpeed(),
-                cameraController->getWorldUpAxis()
-            );
-          }
-          else
-          {
+                m_GLFWHandle.window(), cameraController->getSpeed(),
+                cameraController->getWorldUpAxis());
+          } else {
             cameraController = std::make_unique<TrackballCameraController>(
-                m_GLFWHandle.window(),
-                cameraController->getSpeed(),
-                cameraController->getWorldUpAxis()
-            );
+                m_GLFWHandle.window(), cameraController->getSpeed(),
+                cameraController->getWorldUpAxis());
           }
           cameraController->setCamera(copy);
           useTrackball = !useTrackball;
         }
-        if (ImGui::CollapsingHeader("Light"))
+      }
+      if (ImGui::CollapsingHeader("Light")) {
+        glm::vec2 euler = light.getEulerAngles();
+        glm::vec3 colourGlm = light.getColour();
+        ImVec4 colour = ImVec4(colourGlm.r, colourGlm.g, colourGlm.b, 0.f);
+        float intensity = light.getIntensity();
+
+        bool hasLightDirChanged = false;
+        hasLightDirChanged |= ImGui::SliderAngle("LightTheta", &euler.x ,-180.f, 180.f);
+        hasLightDirChanged |= ImGui::SliderAngle("LightPhi",   &euler.y ,-180.f, 180.f);
+
+        if (hasLightDirChanged) {
+          light.setDirection(euler.x, euler.y);
+        }
+
+        if (ImGui::RadioButton("From Camera", useCameraLight)) {
+          useCameraLight = !useCameraLight;
+        }
+
+        if (ImGui::ColorEdit3("Colour", &colour.x)) {
+          colourGlm = glm::vec3(colour.x, colour.y, colour.z);
+          light.setColour(colourGlm);
+        }
+        if (ImGui::SliderFloat("Intensity", &intensity, 0.f, 1.f)) {
+          light.setIntensity(intensity);
+        }
+
+        if (ImGui::RadioButton("Use occlusions", useOcclusion)) {
+          useOcclusion = !useOcclusion;
+        }
+      }
+      if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        glm::vec3 gravityDirGlm = glm::vec3(gravityDir.get<0>(), gravityDir.get<1>(), gravityDir.get<2>());
+        auto euler = glm::vec2(); // glm::eulerAngles(quat);
         {
-          glm::vec2 euler = light.getEulerAngles();
-          glm::vec3 colourGlm = light.getColour();
-          ImVec4 colour = ImVec4(colourGlm.r, colourGlm.g, colourGlm.b, 0.f);
-          float intensity = light.getIntensity();
+          euler.x = glm::acos(gravityDirGlm.y);
+          const float sinTheta = glm::sin(euler.x);
+          euler.y = glm::acos(gravityDirGlm.x / sinTheta);
+        }
+        auto strength = static_cast<float>(gravityStrength);
 
-          bool hasLightDirChanged = false;
-          hasLightDirChanged |= ImGui::SliderAngle("Theta", &euler.x ,-180.f, 180.f);
-          hasLightDirChanged |= ImGui::SliderAngle("Phi",   &euler.y ,-180.f, 180.f);
+        if (ImGui::RadioButton("Enable Physics", enabledPhysicsUpdate)) {
+          enabledPhysicsUpdate = !enabledPhysicsUpdate;
+        }
 
-          if (hasLightDirChanged)
-          {
-            light.setDirection(euler.x, euler.y);
-          }
+        bool hasGravityDirChanged = false;
+        hasGravityDirChanged |= ImGui::SliderAngle("GravityTheta", &euler.x ,-180.f, 180.f);
+        hasGravityDirChanged |= ImGui::SliderAngle("GravityPhi",   &euler.y ,-180.f, 180.f);
 
-          if (ImGui::RadioButton("From Camera", useCameraLight))
-          {
-            useCameraLight = !useCameraLight;
-          }
+        if (hasGravityDirChanged) {
+          const float sinTheta = glm::sin(euler.x);
+          gravityDirGlm = glm::vec3(sinTheta * glm::cos(euler.y),
+                           glm::cos(euler.x),
+                           sinTheta * glm::sin(euler.y));
+          gravityDir = { gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z };
+        }
 
-          if (ImGui::ColorEdit3("Colour", &colour.x))
-          {
-            colourGlm = glm::vec3(colour.x, colour.y, colour.z);
-            light.setColour(colourGlm);
-          }
-          if (ImGui::SliderFloat("Intensity", &intensity, 0.f, 1.f))
-          {
-            light.setIntensity(intensity);
-          }
+        bool hasGravityStrengthChanged = ImGui::SliderFloat("GravityStrength", &strength, 0.f, 20.f);
+        if (hasGravityStrengthChanged) {
+          gravityStrength = strength;
+        }
 
-          if (ImGui::RadioButton("Use occlusions", useOcclusion))
-          {
-            useOcclusion = !useOcclusion;
-          }
-
-
+        if (hasGravityDirChanged || hasGravityStrengthChanged) {
+          gravity->setVector(gravityDir * gravityStrength);
         }
       }
       ImGui::End();
@@ -926,14 +968,12 @@ int ViewerApplication::run()
     imguiRenderFrame();
 
     glfwPollEvents(); // Poll for and process events
+    const auto elapsedTime = glfwGetTime() - time;
 
-    auto ellapsedTime = glfwGetTime() - seconds;
     auto guiHasFocus =
         ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard;
     if (!guiHasFocus) {
-      cameraController->update(float(ellapsedTime));
-      // update physics.
-      simulation.stepDelta(ellapsedTime);
+      cameraController->update(float(elapsedTime));
     }
 
 
