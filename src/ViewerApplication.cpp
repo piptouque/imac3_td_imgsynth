@@ -6,7 +6,6 @@
 #include <exception>
 
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/io.hpp>
 
@@ -88,7 +87,6 @@ namespace {
       glfwSetWindowShouldClose(window, 1);
     }
   }
-
 }
 
 
@@ -130,10 +128,9 @@ int ViewerApplication::run()
   {
     glGenBuffers(1 , &ambientLightBufferObject);
 
-    // alloc on GPU
     glBindBuffer(GL_UNIFORM_BUFFER, ambientLightBufferObject);
     glBufferData(GL_UNIFORM_BUFFER,
-                 sizeof(MaterialData),
+                 sizeof(AmbientLightData),
                  nullptr,
                  GL_DYNAMIC_READ
                 );
@@ -149,6 +146,30 @@ int ViewerApplication::run()
     glBindBufferBase(GL_UNIFORM_BUFFER, AMBIENTLIGHT_BLOCK_BINDING, ambientLightBufferObject);
   }
 
+  // Material
+  GLuint materialBufferObject;
+  {
+    glGenBuffers(1 , &materialBufferObject);
+
+    // alloc on GPU
+    glBindBuffer(GL_UNIFORM_BUFFER, materialBufferObject);
+    glBufferData(GL_UNIFORM_BUFFER,
+                 sizeof(MaterialData),
+                 nullptr,
+                 GL_DYNAMIC_READ
+                );
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    GLuint materialBlockIndex = glGetUniformBlockIndex(glslProgram.glId(),
+                                                       MATERIAL_UNIFORM_BUFFER_NAME);
+
+    assert(materialBlockIndex != GL_INVALID_INDEX);
+
+    glUniformBlockBinding(glslProgram.glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
+
+    glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, materialBufferObject);
+  }
+
   // first load the models in order to set camera according to scene bounds.
   std::vector<ObjectModel> objectModels;
   objectModels.reserve(m_gltfFilePaths.size());
@@ -156,6 +177,54 @@ int ViewerApplication::run()
   {
     objectModels.emplace_back(path, glslProgram);
   }
+
+  // Physics
+  bool enabledPhysicsUpdate = false;
+  double simulationStep = 0.05;
+  // a multiplier to speed the simulation up or slow it down.
+  double simulationSpeed = 1.0;
+
+  float gravityTheta = glm::pi<float>();
+  float gravityPhi = 0.f;
+  const auto computeDirFromEuler = [](float theta, float phi) -> glm::vec3
+  {
+    const float sinTheta = glm::sin(theta);
+    return glm::vec3(sinTheta * glm::cos(phi),
+                     glm::cos(theta),
+                     sinTheta * glm::sin(phi));
+  };
+
+  double gravityStrength = 9.81;
+
+  Simulation simulation;
+
+  /*
+   * todo: flag with set of Hooke springs.
+  auto o1 = std::make_shared<Object>(m);
+  auto o2 = std::make_shared<Object>(m);
+
+  simulation.addKinematicObject(o1);
+  simulation.addKinematicObject(o2);
+
+  // -- forces
+
+  double k = 20.0;
+  double l0 = 0.5;
+
+   // fixme: for some reason I need to cast it to Force outside of addForce.
+  auto spring = static_cast<std::shared_ptr<Force>>(std::make_shared<HookSpring>(k, l0, o1, o2));
+  simulation.addForce(spring);
+   */
+
+  std::shared_ptr<Gravity> gravity;
+  {
+    const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
+    gravity = std::make_shared<Gravity>(
+        Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
+        * gravityStrength);
+  }
+  simulation.addForceField(gravity);
+
 
   // init random
   unsigned int seed;
@@ -191,8 +260,9 @@ int ViewerApplication::run()
   // ground is a static object -> mass to 0.
   std::shared_ptr<PhysicsObject> groundObject = std::make_shared<PhysicsObject>(
       0.0,
-      Position {});
+      3.0 * Position { -1.0, -1.0, -1.0 });
   const std::size_t groundModelIdx = 1;
+  simulation.addKinematicObject(groundObject);
 
   // the physical representation of the objects
   double m = 1.0; // mass
@@ -210,8 +280,9 @@ int ViewerApplication::run()
     for (std::size_t i = 0; i < numberObjects; ++i)
     {
       objects.push_back(std::make_shared<PhysicsObject>(m,
-          groundObject->getPosition() + positions.at(i)));
+           positions.at(i)));
       objectToModelIndices.push_back(objectModelIdx);
+      simulation.addKinematicObject(objects.back());
     }
   }
 
@@ -263,60 +334,6 @@ int ViewerApplication::run()
   bool useCameraLight = true;
   bool useOcclusion = true;
 
-
-  // Physics
-  bool enabledPhysicsUpdate = false;
-  double simulationStep = 0.05;
-  // a multiplier to speed the simulation up or slow it down.
-  double simulationSpeed = 1.0;
-
-  float gravityTheta = glm::pi<float>();
-  float gravityPhi = 0.f;
-  const auto computeDirFromEuler = [](float theta, float phi) -> glm::vec3
-  {
-    const float sinTheta = glm::sin(theta);
-    return glm::vec3(sinTheta * glm::cos(phi),
-                     glm::cos(theta),
-                     sinTheta * glm::sin(phi));
-  };
-
-  double gravityStrength = 9.81;
-
-  Simulation simulation;
-
-  // -- objects
-  for (auto & obj : objects)
-  {
-    simulation.addKinematicObject(obj);
-  }
-  simulation.addKinematicObject(groundObject);
-
-  /*
-  auto o1 = std::make_shared<Object>(m);
-  auto o2 = std::make_shared<Object>(m);
-
-  simulation.addKinematicObject(o1);
-  simulation.addKinematicObject(o2);
-
-  // -- forces
-
-  double k = 20.0;
-  double l0 = 0.5;
-
-   // fixme: for some reason I need to cast it to Force outside of addForce.
-  auto spring = static_cast<std::shared_ptr<Force>>(std::make_shared<HookSpring>(k, l0, o1, o2));
-  simulation.addForce(spring);
-   */
-
-  std::shared_ptr<Gravity> gravity;
-  {
-    const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
-    gravity = std::make_shared<Gravity>(
-        Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
-        * gravityStrength);
-  }
-  simulation.addForceField(gravity);
-
   //
   // Setup OpenGL state for rendering
   glEnable(GL_DEPTH_TEST);
@@ -339,7 +356,7 @@ int ViewerApplication::run()
       GLvoid *bufferPtr = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
       assert(bufferPtr);
       // copy data
-      std::memcpy(bufferPtr, &data, sizeof(DirectionalLightData) * 1);
+      std::memcpy(bufferPtr, &data, sizeof(DirectionalLightData));
       glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
       glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
@@ -358,19 +375,25 @@ int ViewerApplication::run()
     std::size_t physicalObjectIdx = 0;
     for (const auto & obj : objects)
     {
-      auto pos = obj->getPosition();
+      const auto pos = obj->getPosition();
       glm::mat4 const rootModelMatrix = glm::translate(
           glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
                                                       );
-      objectModels.at(objectToModelIndices.at(physicalObjectIdx)).draw(rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+      objectModels.at(objectToModelIndices.at(physicalObjectIdx)).draw(
+          materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
       ++physicalObjectIdx;
     }
+
     // ground object
-    auto pos = groundObject->getPosition();
-    glm::mat4 const rootModelMatrix = glm::translate(
-        glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
-                                                    );
-    objectModels.at(groundModelIdx).draw(rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+    {
+      const auto pos = groundObject->getPosition();
+      glm::mat4 const rootModelMatrix = glm::translate(
+          glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
+                                                      );
+      objectModels.at(groundModelIdx).draw(
+          materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+
+    }
 
   };
 
@@ -542,7 +565,7 @@ int ViewerApplication::run()
             for (std::size_t i = 0; i < numberObjects; ++i)
             {
               objects.at(i)->setVelocity(Vector { });
-              objects.at(i)->setPosition(groundObject->getPosition() + positions.at(i));
+              objects.at(i)->setPosition(positions.at(i));
             }
         }
 
@@ -662,30 +685,6 @@ ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
   assert(m_emissionTextureLocation          != -1);
   assert(m_occlusionTextureLocation          != -1);
 
-  // material UBO stuff
-  {
-    glGenBuffers(1 , &m_materialBufferObject);
-
-    // alloc on GPU
-    glBindBuffer(GL_UNIFORM_BUFFER, m_materialBufferObject);
-    glBufferData(GL_UNIFORM_BUFFER,
-                 sizeof(MaterialData),
-                 nullptr,
-                 GL_DYNAMIC_READ
-                );
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-    GLuint materialBlockIndex = glGetUniformBlockIndex(programme.glId(),
-                                                       MATERIAL_UNIFORM_BUFFER_NAME);
-
-    assert(materialBlockIndex != GL_INVALID_INDEX);
-
-    glUniformBlockBinding(programme.glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
-
-    glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, m_materialBufferObject);
-  }
-
-  m_defaultTextureObject = createDefaultTextureObject();
 
 }
 
@@ -694,11 +693,9 @@ ObjectModel::~ObjectModel()
   glDeleteTextures(static_cast<GLsizei>(m_textureObjects.size()), m_textureObjects.data());
   glDeleteBuffers(static_cast<GLsizei>(m_bufferObjects.size()), m_bufferObjects.data());
   glDeleteVertexArrays(static_cast<GLsizei>(m_vertexArrayObjects.size()), m_vertexArrayObjects.data());
-  glDeleteTextures(1, &m_defaultTextureObject);
-  glDeleteBuffers(1, &m_materialBufferObject);
 }
 
-void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
+void ObjectModel::bindMaterial(GLuint materialBufferObject, int materialIdx, bool useOcclusion) const
 {
   MaterialData data;
 
@@ -720,8 +717,7 @@ void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureIdx >= 0
                                  ? m_textureObjects.at(static_cast<std::size_t>(textureIdx))
-                                 : m_defaultTextureObject
-                 );
+                                 : getDefaultTextureObject());
     // update
     glUniform1i(m_baseTextureLocation, 0);
 
@@ -752,11 +748,11 @@ void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
   else
   {
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_defaultTextureObject);
+    glBindTexture(GL_TEXTURE_2D, getDefaultTextureObject());
     glUniform1i(m_baseTextureLocation, 0);
   }
-  // update UBO data
-  glBindBuffer(GL_UNIFORM_BUFFER, m_materialBufferObject);
+  // update Material UBO data
+  glBindBuffer(GL_UNIFORM_BUFFER, materialBufferObject);
   GLvoid *bufferPtr = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
   assert(bufferPtr);
   std::memcpy(bufferPtr, &data, sizeof(MaterialData));
@@ -765,11 +761,11 @@ void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
 
 }
 
-void ObjectModel::draw(
-                       const glm::mat4 & modelMatrix,
-                       const glm::mat4 & viewMatrix,
-                       const glm::mat4 & projMatrix,
-                       bool useOcclusion) const
+void ObjectModel::draw(GLuint materialBufferIndex,
+    const glm::mat4 & modelMatrix,
+    const glm::mat4 & viewMatrix,
+    const glm::mat4 & projMatrix,
+    bool useOcclusion) const
 {
 
   // The recursive function that should draw a node
@@ -813,7 +809,7 @@ void ObjectModel::draw(
             const GLuint vao = m_vertexArrayObjects.at(
                 static_cast<std::size_t>(vaoRange.begin) + primitiveIdx);
 
-            bindMaterial(primitive.material, useOcclusion);
+            bindMaterial(materialBufferIndex, primitive.material, useOcclusion);
 
             glBindVertexArray(vao);
 
@@ -992,12 +988,17 @@ std::vector<GLuint> ObjectModel::createVertexArrayObjects(
   return vertexArrayObjects;
 }
 
-GLuint ObjectModel::createDefaultTextureObject()
-{
-  GLuint textureObject;
-  glGenTextures(1, &textureObject);
+GLuint ObjectModel::s_defaultTextureObject = GL_INVALID_INDEX;
 
-  glBindTexture(GL_TEXTURE_2D, textureObject);
+GLuint ObjectModel::getDefaultTextureObject()
+{
+  if (s_defaultTextureObject != GL_INVALID_INDEX)
+  {
+    return s_defaultTextureObject;
+  }
+  glGenTextures(1, &s_defaultTextureObject);
+
+  glBindTexture(GL_TEXTURE_2D, s_defaultTextureObject);
 
   static constexpr const float white[] = { 1.f, 1.f, 1.f, 1.f };
   // single white pixel.
@@ -1019,7 +1020,7 @@ GLuint ObjectModel::createDefaultTextureObject()
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  return textureObject;
+  return s_defaultTextureObject;
 }
 
 std::vector<GLuint> ObjectModel::createTextureObjects(tinygltf::Model & model)

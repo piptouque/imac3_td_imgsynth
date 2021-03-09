@@ -63,7 +63,8 @@ public:
 
   [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
 
-  void draw(const glm::mat4 & modelMatrix,
+  void draw(GLuint materialBufferIndex,
+            const glm::mat4 & modelMatrix,
             const glm::mat4 & viewMatrix,
             const glm::mat4 & projMatrix,
             bool useOcclusion = true) const;
@@ -76,7 +77,7 @@ private:
     GLsizei count; // Number of elements in range
   };
 
-  void bindMaterial(int materialIdx, bool useOcclusion) const;
+  void bindMaterial(GLuint materialBufferObject, int materialIdx, bool useOcclusion) const;
 
   ///
   /// \param model
@@ -94,7 +95,8 @@ private:
       std::vector<VaoRange> & meshIndexToVaoRange);
   // This function might set texture sampler parameters if not specified.
   [[nodiscard]] static std::vector<GLuint> createTextureObjects(tinygltf::Model & model);
-  [[nodiscard]] static GLuint createDefaultTextureObject();
+
+  [[nodiscard]] static GLuint getDefaultTextureObject();
 
   /** -- fields -- **/
   tinygltf::Model m_model;
@@ -112,9 +114,7 @@ private:
   GLint m_modelViewProjMatrixLocation;
   GLint m_normalMatrixLocation;
 
-  GLuint m_materialBufferObject;
-  // could be static, but whatever.
-  GLuint m_defaultTextureObject;
+  static GLuint s_defaultTextureObject;
 };
 
 class AmbientLight
