@@ -182,7 +182,7 @@ namespace {
 
 }
 
-ViewerApplication::Object::Object(const std::experimental::filesystem::path & modelPath,
+ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
     const GLProgram & programme)
 {
   loadGltfFile(modelPath, m_model);
@@ -243,7 +243,7 @@ ViewerApplication::Object::Object(const std::experimental::filesystem::path & mo
 
 }
 
-ViewerApplication::Object::~Object()
+ObjectModel::~ObjectModel()
 {
   glDeleteTextures(static_cast<GLsizei>(m_textureObjects.size()), m_textureObjects.data());
   glDeleteBuffers(static_cast<GLsizei>(m_bufferObjects.size()), m_bufferObjects.data());
@@ -252,7 +252,7 @@ ViewerApplication::Object::~Object()
   glDeleteBuffers(1, &m_materialBufferObject);
 }
 
-void ViewerApplication::Object::bindMaterial(int materialIdx, bool useOcclusion) const
+void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
 {
     MaterialData data;
 
@@ -319,7 +319,7 @@ void ViewerApplication::Object::bindMaterial(int materialIdx, bool useOcclusion)
 
 }
 
-void ViewerApplication::Object::draw(const glm::mat4 & modelMatrix,
+void ObjectModel::draw(const glm::mat4 & modelMatrix,
     const glm::mat4 & viewMatrix,
     const glm::mat4 & projMatrix,
     bool useOcclusion) const
@@ -411,7 +411,7 @@ void ViewerApplication::Object::draw(const glm::mat4 & modelMatrix,
   }
 }
 
-bool ViewerApplication::loadGltfFile(const std::experimental::filesystem::path & path,
+bool ObjectModel::loadGltfFile(const std::experimental::filesystem::path & path,
     tinygltf::Model & model) {
   tinygltf::TinyGLTF loader;
   std::string err, warn;
@@ -443,7 +443,7 @@ bool ViewerApplication::loadGltfFile(const std::experimental::filesystem::path &
   return success;
 }
 
-std::vector<GLuint> ViewerApplication::createBufferObjects(
+std::vector<GLuint> ObjectModel::createBufferObjects(
     const tinygltf::Model &model) {
   std::vector<GLuint> bufferObjects(model.buffers.size());
   glGenBuffers(static_cast<GLsizei>(bufferObjects.size()), bufferObjects.data());
@@ -460,7 +460,7 @@ std::vector<GLuint> ViewerApplication::createBufferObjects(
   return bufferObjects;
 }
 
-std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
+std::vector<GLuint> ObjectModel::createVertexArrayObjects(
     const tinygltf::Model & model,
     const std::vector<GLuint> & bufferObjects,
     std::vector<VaoRange> & meshIndexToVaoRange) {
@@ -545,7 +545,7 @@ std::vector<GLuint> ViewerApplication::createVertexArrayObjects(
   return vertexArrayObjects;
 }
 
-GLuint ViewerApplication::createDefaultTextureObject()
+GLuint ObjectModel::createDefaultTextureObject()
 {
   GLuint textureObject;
   glGenTextures(1, &textureObject);
@@ -575,7 +575,7 @@ GLuint ViewerApplication::createDefaultTextureObject()
   return textureObject;
 }
 
-std::vector<GLuint> ViewerApplication::createTextureObjects(tinygltf::Model & model)
+std::vector<GLuint> ObjectModel::createTextureObjects(tinygltf::Model & model)
 {
   std::vector<GLuint> textureObjects(model.textures.size());
 
@@ -724,7 +724,7 @@ int ViewerApplication::run()
   }
 
   // first load the model in order to set camera according to scene bounds.
-  Object object = Object(m_gltfFilePath, glslProgram);
+  ObjectModel object = ObjectModel(m_gltfFilePath, glslProgram);
 
   // init random
   unsigned int seed;

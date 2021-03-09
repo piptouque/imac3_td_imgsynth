@@ -18,70 +18,7 @@ public:
   int run();
 
 private:
-  // TD
 
-  // A range of indices in a vector containing Vertex Array Objects
-  struct VaoRange
-  {
-    GLsizei begin; // Index of first element in vertexArrayObjects
-    GLsizei count; // Number of elements in range
-  };
-
-  class Object
-  {
-  public:
-    /** -- methods -- **/
-    explicit Object(const std::experimental::filesystem::path & modelPath, const GLProgram & programme);
-    ~Object();
-
-    [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
-
-    void draw(const glm::mat4 & modelMatrix,
-        const glm::mat4 & viewMatrix,
-        const glm::mat4 & projMatrix,
-        bool useOcclusion = true) const;
-  private:
-    /** -- methods -- **/
-    void bindMaterial(int materialIdx, bool useOcclusion) const;
-
-    /** -- fields -- **/
-    tinygltf::Model m_model;
-
-    std::vector<GLuint> m_textureObjects;
-    std::vector<GLuint> m_bufferObjects;
-    std::vector<VaoRange> m_meshIndexToVaoRange;
-    std::vector<GLuint> m_vertexArrayObjects ;
-
-    GLint m_baseTextureLocation;
-    GLint m_metallicRoughnessTextureLocation;
-    GLint m_emissionTextureLocation;
-    GLint m_occlusionTextureLocation;
-    GLint m_modelViewMatrixLocation;
-    GLint m_modelViewProjMatrixLocation;
-    GLint m_normalMatrixLocation;
-
-    GLuint m_materialBufferObject;
-    // could be static, but whatever.
-    GLuint m_defaultTextureObject;
-  };
-
-
-  ///
-  /// \param model
-  /// \return Success
-  static bool loadGltfFile(const std::experimental::filesystem::path & path,
-      tinygltf::Model & model);
-  ///
-  /// \param model
-  /// \return
-  [[nodiscard]] static std::vector<GLuint> createBufferObjects(const tinygltf::Model & model);
-  [[nodiscard]] static std::vector<GLuint> createVertexArrayObjects(
-      const tinygltf::Model & model,
-      const std::vector<GLuint> & bufferObjects,
-      std::vector<VaoRange> & meshIndexToVaoRange);
-  // This function might set texture sampler parameters if not specified.
-  [[nodiscard]] static std::vector<GLuint> createTextureObjects(tinygltf::Model & model);
-  [[nodiscard]] static GLuint createDefaultTextureObject();
 
   GLsizei m_nWindowWidth = 1280;
   GLsizei m_nWindowHeight = 720;
@@ -114,4 +51,68 @@ private:
     the creation of a GLFW windows and thus a GL context which must exists
     before most of OpenGL function calls.
   */
+};
+
+// TD
+class ObjectModel
+{
+public:
+  /** -- methods -- **/
+  explicit ObjectModel(const std::experimental::filesystem::path & modelPath, const GLProgram & programme);
+  ~ObjectModel();
+
+  [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
+
+  void draw(const glm::mat4 & modelMatrix,
+            const glm::mat4 & viewMatrix,
+            const glm::mat4 & projMatrix,
+            bool useOcclusion = true) const;
+private:
+  /** -- methods -- **/
+  // A range of indices in a vector containing Vertex Array Objects
+  struct VaoRange
+  {
+    GLsizei begin; // Index of first element in vertexArrayObjects
+    GLsizei count; // Number of elements in range
+  };
+
+  void bindMaterial(int materialIdx, bool useOcclusion) const;
+
+  ///
+  /// \param model
+  /// \return Success
+  static bool loadGltfFile(const std::experimental::filesystem::path & path,
+                           tinygltf::Model & model);
+  ///
+
+  /// \param model
+  /// \return
+  [[nodiscard]] static std::vector<GLuint> createBufferObjects(const tinygltf::Model & model);
+  [[nodiscard]] static std::vector<GLuint> createVertexArrayObjects(
+      const tinygltf::Model & model,
+      const std::vector<GLuint> & bufferObjects,
+      std::vector<VaoRange> & meshIndexToVaoRange);
+  // This function might set texture sampler parameters if not specified.
+  [[nodiscard]] static std::vector<GLuint> createTextureObjects(tinygltf::Model & model);
+  [[nodiscard]] static GLuint createDefaultTextureObject();
+
+  /** -- fields -- **/
+  tinygltf::Model m_model;
+
+  std::vector<GLuint> m_textureObjects;
+  std::vector<GLuint> m_bufferObjects;
+  std::vector<VaoRange> m_meshIndexToVaoRange;
+  std::vector<GLuint> m_vertexArrayObjects ;
+
+  GLint m_baseTextureLocation;
+  GLint m_metallicRoughnessTextureLocation;
+  GLint m_emissionTextureLocation;
+  GLint m_occlusionTextureLocation;
+  GLint m_modelViewMatrixLocation;
+  GLint m_modelViewProjMatrixLocation;
+  GLint m_normalMatrixLocation;
+
+  GLuint m_materialBufferObject;
+  // could be static, but whatever.
+  GLuint m_defaultTextureObject;
 };
