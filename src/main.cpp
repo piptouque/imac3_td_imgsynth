@@ -24,8 +24,8 @@ int main(int argc, char **argv)
   args::Command interactive{
       commands, "viewer", "Run glTF viewer",
       [&](args::Subparser &p) {
-        args::Positional<std::string> file{
-            p, "file", "Path to file",
+        args::PositionalList<std::string> file{
+            p, "file", "Path to file(s)",
             args::Options::Required};
         args::ValueFlag<std::string> lookat{p, "lookat",
             "Look at parameters for the Camera with format "
@@ -46,6 +46,16 @@ int main(int argc, char **argv)
             "Only png is supported.",
             {"o", "output"}};
         p.Parse();
+
+        std::vector<std::string> fileStrings = args::get(file);
+        if (!fileStrings.size()) {
+          throw args::ValidationError("Expected at least one file, got zero.");
+        }
+        std::vector<fs::path> filePaths(fileStrings.size());
+        std::transform(fileStrings.begin(), fileStrings.end(),
+            filePaths.begin(),
+            [](const std::string & s) { return fs::path(s); }
+            );
 
         std::vector<float> lookatParams;
         if (lookat) {
@@ -68,7 +78,7 @@ int main(int argc, char **argv)
             ? static_cast<uint32_t>(args::get(imageHeight))
             : 720;
 
-        ViewerApplication app{fs::path{argv[0]}, width, height, args::get(file),
+        ViewerApplication app{fs::path{argv[0]}, width, height, filePaths,
             lookatParams, args::get(vertexShader), args::get(fragmentShader),
             args::get(output)};
         returnCode = app.run();

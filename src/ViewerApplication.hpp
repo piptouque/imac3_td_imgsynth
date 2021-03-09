@@ -11,7 +11,7 @@ class ViewerApplication
 {
 public:
   ViewerApplication(const fs::path &appPath, uint32_t width, uint32_t height,
-      const fs::path &gltfFile, const std::vector<float> &lookatArgs,
+      const std::vector<fs::path> & gltfFiles, const std::vector<float> &lookatArgs,
       const std::string &vertexShader, const std::string &fragmentShader,
       const fs::path &output);
 
@@ -27,7 +27,7 @@ private:
   const std::string m_AppName;
   const fs::path m_ShadersRootPath;
 
-  fs::path m_gltfFilePath;
+  std::vector<fs::path> m_gltfFilePaths;
   std::string m_vertexShader = "forward.vs.glsl";
   std::string m_fragmentShader = "pbr_directional_light.fs.glsl";
 
@@ -58,7 +58,7 @@ class ObjectModel
 {
 public:
   /** -- methods -- **/
-  explicit ObjectModel(const std::experimental::filesystem::path & modelPath, const GLProgram & programme);
+  explicit ObjectModel(const fs::path & modelPath, const GLProgram & programme);
   ~ObjectModel();
 
   [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
@@ -81,7 +81,7 @@ private:
   ///
   /// \param model
   /// \return Success
-  static bool loadGltfFile(const std::experimental::filesystem::path & path,
+  static bool loadGltfFile(const fs::path & path,
                            tinygltf::Model & model);
   ///
 
@@ -115,4 +115,108 @@ private:
   GLuint m_materialBufferObject;
   // could be static, but whatever.
   GLuint m_defaultTextureObject;
+};
+
+class AmbientLight
+
+{
+public:
+  AmbientLight() = default;
+  virtual ~AmbientLight() = default;
+  AmbientLight(glm::vec3 colour, float intensity) :
+      m_colour(std::move(colour)), m_intensity(intensity)
+  {
+  }
+
+  [[nodiscard]] inline glm::vec3 getRadiance() const
+  {
+    return m_colour * m_intensity;
+  }
+  [[nodiscard]] inline const glm::vec3 &getColour() const { return m_colour; }
+  [[nodiscard]] inline float getIntensity() const { return m_intensity; }
+
+  inline void setColour(glm::vec3 colour) { m_colour = glm::normalize(colour); }
+  inline void setIntensity(float intensity) { m_intensity = intensity; }
+
+private:
+  glm::vec3 m_colour;
+  float m_intensity;
+
+};
+class DirectionalLight : public AmbientLight
+{
+public:
+  DirectionalLight() = default;
+  DirectionalLight(glm::vec3 colour, float intensity, glm::vec3 dir)
+      : AmbientLight(std::move(colour), intensity)
+  {
+    setDirection(dir);
+  }
+
+  [[nodiscard]] inline const glm::vec3 & getDirection() const { return m_dir; }
+  [[nodiscard]] inline glm::vec2 getEulerAngles() const { return glm::vec2(m_theta, m_phi); }
+
+  void setDirection(glm::vec3 a_dir)
+  {
+    m_dir = (1.f / a_dir.length()) * a_dir;
+    const glm::vec2 euler = computeEulerAngles(m_dir);
+    m_theta = euler.x;
+    m_phi = euler.y;
+  }
+
+  void setDirection(float theta, float phi)
+  {
+    m_theta = theta;
+    m_phi = phi;
+    m_dir = computeDirection(m_theta, m_phi);
+  }
+
+private:
+  [[nodiscard]] static glm::vec3 computeDirection(float theta, float phi)
+  {
+    const float sinTheta = glm::sin(theta);
+    return glm::vec3(sinTheta * glm::cos(phi),
+                     glm::cos(theta),
+                     sinTheta * glm::sin(phi));
+  }
+
+  [[nodiscard]] static glm::vec2 computeEulerAngles(glm::vec3 dir)
+  {
+    // Not good.
+    const float theta = glm::acos(dir.y);
+    const float sinTheta = glm::sin(theta);
+    const float phi = glm::abs(sinTheta) < std::numeric_limits<float>::min()
+                      ? glm::half_pi<float>()
+                      : glm::acos(dir.x / sinTheta);
+    return glm::vec2(theta, phi);
+  }
+
+private:
+  //
+  glm::vec3 m_dir;
+  // degrees
+  float m_theta;
+  float m_phi;
+};
+
+// OpenGL data
+struct AmbientLightData
+{
+  glm::vec4 radiance;
+};
+
+struct DirectionalLightData
+{
+  glm::vec4 viewDir;
+  glm::vec4 radiance;
+};
+
+
+struct MaterialData
+{
+  glm::vec4 baseColourFactor;
+  glm::vec4 emissiveFactor;
+  glm::float64 metallicFactor;
+  glm::float64 roughnessFactor;
+  glm::float64 occlusionStrength;
 };

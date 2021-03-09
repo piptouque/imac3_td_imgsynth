@@ -25,6 +25,9 @@ using PhysicsObject = Simulation::Object;
 using Force = Simulation::Force;
 using ForceField = Simulation::ForceField;
 
+using Position = PhysicsObject::Position;
+using Vector = PhysicsObject::Vector;
+
 using HookSpring = cant::physics::HookeSpringLink<3, double>;
 using Gravity = cant::physics::UniformForceField<3, double>;
 
@@ -77,595 +80,18 @@ namespace {
     return accessor.byteOffset + bufferView.byteOffset;
   }
 
-  class AmbientLight
+  void keyCallback(
+      GLFWwindow *window, int key, [[maybe_unused]] int scancode,
+      int action, [[maybe_unused]] int mods)
   {
-  public:
-    AmbientLight() = default;
-    virtual ~AmbientLight() = default;
-    AmbientLight(glm::vec3 colour, float intensity) :
-        m_colour(std::move(colour)), m_intensity(intensity)
-    {
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_RELEASE) {
+      glfwSetWindowShouldClose(window, 1);
     }
-
-    [[nodiscard]] inline glm::vec3 getRadiance() const
-    {
-      return m_colour * m_intensity;
-    }
-    [[nodiscard]] inline const glm::vec3 &getColour() const { return m_colour; }
-    [[nodiscard]] inline float getIntensity() const { return m_intensity; }
-
-    inline void setColour(glm::vec3 colour) { m_colour = glm::normalize(colour); }
-    inline void setIntensity(float intensity) { m_intensity = intensity; }
-
-  private:
-    glm::vec3 m_colour;
-    float m_intensity;
-
-  };
-  class DirectionalLight : public AmbientLight
-  {
-  public:
-    DirectionalLight() = default;
-    DirectionalLight(glm::vec3 colour, float intensity, glm::vec3 dir)
-      : AmbientLight(std::move(colour), intensity)
-    {
-      setDirection(dir);
-    }
-
-    [[nodiscard]] inline const glm::vec3 & getDirection() const { return m_dir; }
-    [[nodiscard]] inline glm::vec2 getEulerAngles() const { return glm::vec2(m_theta, m_phi); }
-
-    void setDirection(glm::vec3 a_dir)
-    {
-      m_dir = (1.f / a_dir.length()) * a_dir;
-      const glm::vec2 euler = computeEulerAngles(m_dir);
-      m_theta = euler.x;
-      m_phi = euler.y;
-    }
-
-    void setDirection(float theta, float phi)
-    {
-      m_theta = theta;
-      m_phi = phi;
-      m_dir = computeDirection(m_theta, m_phi);
-    }
-
-  private:
-    [[nodiscard]] static glm::vec3 computeDirection(float theta, float phi)
-    {
-      const float sinTheta = glm::sin(theta);
-      return glm::vec3(sinTheta * glm::cos(phi),
-                        glm::cos(theta),
-                        sinTheta * glm::sin(phi));
-    }
-
-    [[nodiscard]] static glm::vec2 computeEulerAngles(glm::vec3 dir)
-    {
-      // Not good.
-      const float theta = glm::acos(dir.y);
-      const float sinTheta = glm::sin(theta);
-      const float phi = glm::abs(sinTheta) < std::numeric_limits<float>::min()
-         ? glm::half_pi<float>()
-         : glm::acos(dir.x / sinTheta);
-      return glm::vec2(theta, phi);
-    }
-
-  private:
-    //
-    glm::vec3 m_dir;
-    // degrees
-    float m_theta;
-    float m_phi;
-  };
-
-  // OpenGL data
-  struct AmbientLightData
-  {
-    glm::vec4 radiance;
-  };
-
-  struct DirectionalLightData
-  {
-    glm::vec4 viewDir;
-    glm::vec4 radiance;
-  };
-
-
-  struct MaterialData
-  {
-    glm::vec4 baseColourFactor;
-    glm::vec4 emissiveFactor;
-    glm::float64 metallicFactor;
-    glm::float64 roughnessFactor;
-    glm::float64 occlusionStrength;
-  };
+  }
 
 }
 
-ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
-    const GLProgram & programme)
-{
-  loadGltfFile(modelPath, m_model);
-  m_textureObjects = createTextureObjects(m_model);
-  m_bufferObjects = createBufferObjects(m_model);
-  m_vertexArrayObjects = createVertexArrayObjects(
-      m_model, m_bufferObjects, m_meshIndexToVaoRange);
 
-  m_baseTextureLocation =
-      glGetUniformLocation(programme.glId(), BASE_TEX_UNIFORM_NAME);
-  m_metallicRoughnessTextureLocation =
-      glGetUniformLocation(programme.glId(), MR_TEX_UNIFORM_NAME);
-  m_emissionTextureLocation =
-      glGetUniformLocation(programme.glId(), EM_TEX_UNIFORM_NAME);
-  m_occlusionTextureLocation =
-      glGetUniformLocation(programme.glId(), OC_TEX_UNIFORM_NAME);
-
-  m_modelViewMatrixLocation =
-      glGetUniformLocation(programme.glId(), MV_MATRIX_UNIFORM_NAME);
-  m_modelViewProjMatrixLocation =
-      glGetUniformLocation(programme.glId(), MVP_MATRIX_UNIFORM_NAME);
-  m_normalMatrixLocation =
-      glGetUniformLocation(programme.glId(), N_MATRIX_UNIFORM_NAME);
-
-  assert(m_modelViewMatrixLocation          != -1);
-  assert(m_modelViewProjMatrixLocation      != -1);
-  assert(m_normalMatrixLocation             != -1);
-
-  assert(m_baseTextureLocation              != -1);
-  assert(m_metallicRoughnessTextureLocation != -1);
-  assert(m_emissionTextureLocation          != -1);
-  assert(m_occlusionTextureLocation          != -1);
-
-  // material UBO stuff
-  {
-    glGenBuffers(1 , &m_materialBufferObject);
-
-    // alloc on GPU
-    glBindBuffer(GL_UNIFORM_BUFFER, m_materialBufferObject);
-    glBufferData(GL_UNIFORM_BUFFER,
-                 sizeof(MaterialData),
-                 nullptr,
-                 GL_DYNAMIC_READ
-                );
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-    GLuint materialBlockIndex = glGetUniformBlockIndex(programme.glId(),
-                                                       MATERIAL_UNIFORM_BUFFER_NAME);
-
-    assert(materialBlockIndex != GL_INVALID_INDEX);
-
-    glUniformBlockBinding(programme.glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
-
-    glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, m_materialBufferObject);
-  }
-
-  m_defaultTextureObject = createDefaultTextureObject();
-
-}
-
-ObjectModel::~ObjectModel()
-{
-  glDeleteTextures(static_cast<GLsizei>(m_textureObjects.size()), m_textureObjects.data());
-  glDeleteBuffers(static_cast<GLsizei>(m_bufferObjects.size()), m_bufferObjects.data());
-  glDeleteVertexArrays(static_cast<GLsizei>(m_vertexArrayObjects.size()), m_vertexArrayObjects.data());
-  glDeleteTextures(1, &m_defaultTextureObject);
-  glDeleteBuffers(1, &m_materialBufferObject);
-}
-
-void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
-{
-    MaterialData data;
-
-  // all of this should be defined in the shaders
-  // (and used, otherwise they get compiled-out.)
-
-    if (materialIdx >= 0) {
-      // Material binding
-      const tinygltf::Material material = m_model.materials.at(static_cast<std::size_t>(materialIdx));
-      const tinygltf::PbrMetallicRoughness & roughness = material.pbrMetallicRoughness;
-
-      data.baseColourFactor = glm::make_vec4(roughness.baseColorFactor.data());
-      data.metallicFactor = roughness.metallicFactor;
-      data.roughnessFactor = roughness.roughnessFactor;
-      data.emissiveFactor = glm::make_vec4(material.emissiveFactor.data());
-      data.occlusionStrength = useOcclusion ? material.occlusionTexture.strength : 0.f;
-
-      const int textureIdx = roughness.baseColorTexture.index;
-      glActiveTexture(GL_TEXTURE0);
-      glBindTexture(GL_TEXTURE_2D, textureIdx >= 0
-                                   ? m_textureObjects.at(static_cast<std::size_t>(textureIdx))
-                                   : m_defaultTextureObject
-                   );
-      // update
-      glUniform1i(m_baseTextureLocation, 0);
-
-      const int metallicRoughnessTextureIdx = roughness.metallicRoughnessTexture.index;
-      if (metallicRoughnessTextureIdx >= 0) {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D,
-                      m_textureObjects.at(static_cast<std::size_t>(metallicRoughnessTextureIdx)));
-        // update
-        glUniform1i(m_metallicRoughnessTextureLocation, 1);
-      }
-
-      const int emissionTextureIdx = material.emissiveTexture.index;
-      if (emissionTextureIdx >= 0) {
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D,
-                      m_textureObjects.at(static_cast<std::size_t>(emissionTextureIdx)));
-        glUniform1i(m_emissionTextureLocation, 2);
-      }
-      const int occlusionTextureIdx = material.occlusionTexture.index;
-      if (occlusionTextureIdx >= 0) {
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D,
-                      m_textureObjects.at(static_cast<std::size_t>(occlusionTextureIdx)));
-        glUniform1i(m_occlusionTextureLocation, 3);
-      }
-    }
-    else
-    {
-      glActiveTexture(GL_TEXTURE0);
-      glBindTexture(GL_TEXTURE_2D, m_defaultTextureObject);
-      glUniform1i(m_baseTextureLocation, 0);
-    }
-    // update UBO data
-    glBindBuffer(GL_UNIFORM_BUFFER, m_materialBufferObject);
-    GLvoid *bufferPtr = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
-    assert(bufferPtr);
-    std::memcpy(bufferPtr, &data, sizeof(MaterialData));
-    glUnmapBuffer(GL_UNIFORM_BUFFER);
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-}
-
-void ObjectModel::draw(const glm::mat4 & modelMatrix,
-    const glm::mat4 & viewMatrix,
-    const glm::mat4 & projMatrix,
-    bool useOcclusion) const
-{
-
-  // The recursive function that should draw a node
-  // We use a std::function because a simple lambda cannot be recursive
-  const std::function<void(int, const glm::mat4 &)> drawNode =
-      [&](int nodeIdx, const glm::mat4 &parentMatrix) {
-        const tinygltf::Node & node = m_model.nodes.at(static_cast<std::size_t>(nodeIdx));
-        const glm::mat4 childModelMatrix = getLocalToWorldMatrix(node, parentMatrix);
-
-        // if the node references a mesh
-        if (node.mesh >= 0) {
-          const glm::mat4 modelViewMatrix = viewMatrix * childModelMatrix;
-          const glm::mat4 modelViewProjectionMatrix = projMatrix * modelViewMatrix;
-          const glm::mat4 normalMatrix = glm::transpose(glm::inverse(modelViewMatrix));
-
-          glUniformMatrix4fv(
-              m_modelViewMatrixLocation,
-              1,
-              GL_FALSE,
-              glm::value_ptr(modelViewMatrix)
-                            );
-          glUniformMatrix4fv(
-              m_modelViewProjMatrixLocation,
-              1,
-              GL_FALSE,
-              glm::value_ptr(modelViewProjectionMatrix)
-                            );
-          glUniformMatrix4fv(
-              m_normalMatrixLocation,
-              1,
-              GL_FALSE,
-              glm::value_ptr(normalMatrix)
-                            );
-
-          const auto meshIdx = static_cast<std::size_t>(node.mesh);
-          const tinygltf::Mesh mesh = m_model.meshes.at(meshIdx);
-
-          std::size_t primitiveIdx = 0;
-          for (const auto & primitive : mesh.primitives) {
-            const VaoRange vaoRange = m_meshIndexToVaoRange.at(meshIdx);
-            const GLuint vao = m_vertexArrayObjects.at(
-                static_cast<std::size_t>(vaoRange.begin) + primitiveIdx);
-
-            bindMaterial(primitive.material, useOcclusion);
-
-            glBindVertexArray(vao);
-
-            // if the primitive uses indices.
-            if (primitive.indices >= 0) {
-              const tinygltf::Accessor & accessor = findAccessor(m_model, static_cast<int>(primitive.indices));
-              const tinygltf::BufferView & bufferView = findBufferView(m_model, accessor);
-              const std::size_t byteOffset = getByteOffset(accessor, bufferView);
-              const auto type = static_cast<GLenum>(accessor.componentType);
-              glDrawElements(
-                  static_cast<GLenum>(primitive.mode),
-                  static_cast<GLsizei>(accessor.count),
-                  type,
-                  reinterpret_cast<GLvoid *>(byteOffset)
-                            );
-            } else {
-              const auto accessorIdx = static_cast<std::size_t>(std::begin(
-                  primitive.attributes)->second);
-              const tinygltf::Accessor & accessor = m_model.accessors.at(accessorIdx);
-              glDrawArrays(
-                  static_cast<GLenum>(primitive.mode),
-                  0,
-                  static_cast<GLsizei>(accessor.count)
-                          );
-            }
-            for (const int childIdx : node.children) {
-              drawNode(childIdx, childModelMatrix);
-            }
-            ++primitiveIdx;
-          }
-        }
-      };
-
-  // Draw the scene referenced by gltf file
-  if (m_model.defaultScene >= 0) {
-    const auto sceneIdx = static_cast<std::size_t>(m_model.defaultScene);
-    const auto & nodes = m_model.scenes[sceneIdx].nodes;
-      std::for_each(nodes.cbegin(), nodes.cend(),
-                    [&](int nodeIdx) -> void {
-                      drawNode(nodeIdx, modelMatrix);
-                    });
-  }
-}
-
-bool ObjectModel::loadGltfFile(const std::experimental::filesystem::path & path,
-    tinygltf::Model & model) {
-  tinygltf::TinyGLTF loader;
-  std::string err, warn;
-  bool success;
-  const std::string filePath = path.string();
-  if (path.has_extension() && path.extension().string() == ".glb")
-  {
-    // Load as binary
-    success = loader.LoadBinaryFromFile(
-        &model, &err, &warn,
-        filePath);
-  }
-  else
-  {
-    // load as text.
-    success = loader.LoadASCIIFromFile(
-        &model, &err, &warn,
-        filePath);
-  }
-  if (!err.empty()) {
-    std::cerr << "Error while parsing GLTF file: " << err << std::endl;
-  }
-  if (!warn.empty()) {
-    std::cerr << "Warning while parsing GLTF file: " << warn << std::endl;
-  }
-  if (!success) {
-    std::cerr << "Failed to parse GLTF file at " << path << std::endl;
-  }
-  return success;
-}
-
-std::vector<GLuint> ObjectModel::createBufferObjects(
-    const tinygltf::Model &model) {
-  std::vector<GLuint> bufferObjects(model.buffers.size());
-  glGenBuffers(static_cast<GLsizei>(bufferObjects.size()), bufferObjects.data());
-  for (std::size_t i = 0; i < bufferObjects.size(); ++i) {
-    glBindBuffer(GL_ARRAY_BUFFER, bufferObjects.at(i));
-    glBufferStorage(
-      GL_ARRAY_BUFFER,
-      model.buffers.at(i).data.size(),
-      model.buffers.at(i).data.data(),
-      GL_DYNAMIC_STORAGE_BIT
-    );
-  }
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  return bufferObjects;
-}
-
-std::vector<GLuint> ObjectModel::createVertexArrayObjects(
-    const tinygltf::Model & model,
-    const std::vector<GLuint> & bufferObjects,
-    std::vector<VaoRange> & meshIndexToVaoRange) {
-
-  std::vector<GLuint> vertexArrayObjects;
-
-  // should be empty, but better safe than sorry.
-  meshIndexToVaoRange.clear();
-  meshIndexToVaoRange.reserve(model.meshes.size());
-  for (const auto &mesh : model.meshes) {
-    const std::size_t vaoOffset = vertexArrayObjects.size();
-
-    vertexArrayObjects.resize(vaoOffset + mesh.primitives.size());
-    //
-    glGenVertexArrays(
-        static_cast<GLsizei>(mesh.primitives.size()),
-        vertexArrayObjects.data() + vaoOffset
-    );
-
-    std::size_t primitiveIdx = 0;
-    for (const auto &primitive : mesh.primitives) {
-      const GLuint primitiveVao =
-          vertexArrayObjects.at(vaoOffset + primitiveIdx);
-      glBindVertexArray(primitiveVao);
-
-      static const std::array<std::pair<std::string, int>, 3> attributes = {
-          {{"POSITION", VERTEX_ATTRIB_POSITION_IDX},
-              {"NORMAL", VERTEX_ATTRIB_NORMAL_IDX},
-              {"TEXCOORD_0", VERTEX_ATTRIB_TEXCOORD0_IDX}}};
-
-      for (const auto &attribute : attributes) {
-        const auto iterator = primitive.attributes.find(attribute.first);
-        // If "POSITION", "NORMAL", etc. has not been found in the map
-        if (iterator == std::end(primitive.attributes)) {
-          continue;
-        }
-        // (*iterator).first is the key,
-        // (*iterator).second is the value, ie. the index of the accessor for this attribute
-        const tinygltf::Accessor & accessor = findAccessor(model, iterator->second);
-        const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
-        const GLuint bufferObject = findBufferObject(bufferObjects, bufferView);
-
-        // checking that the buffer view indeed targets ABO.
-        assert(bufferView.target == GL_ARRAY_BUFFER);
-
-        // Enable the vertex attrib array corresponding to POSITION with glEnableVertexAttribArray (you need to use VERTEX_ATTRIB_POSITION_IDX which has to be defined at the top of the cpp file)
-        glEnableVertexAttribArray(attribute.second);
-        // Bind the buffer object to GL_ARRAY_BUFFER
-        glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
-        // Compute the total byte offset using the accessor and the buffer view
-        const std::size_t byteOffset = getByteOffset(accessor, bufferView);
-        // Call glVertexAttribPointer with the correct arguments.
-        // Remember size is obtained with accessor.type,
-        // type is obtained with accessor.componentType.
-        // The stride is obtained in the bufferView,
-        // normalized is always GL_FALSE,
-        // and pointer is the byteOffset (don't forget the cast).
-        glVertexAttribPointer(
-            attribute.second,
-            accessor.type,
-            static_cast<GLenum>(accessor.componentType),
-            GL_FALSE,
-            static_cast<GLsizei>(bufferView.byteStride),
-            reinterpret_cast<GLvoid *>(byteOffset)
-          );
-      }
-      if (primitive.indices >= 0) {
-        const tinygltf::Accessor & accessor = findAccessor(model, primitive.indices);
-        const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
-        const GLuint bufferObject = findBufferObject(bufferObjects, bufferView);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufferObject);
-      }
-      ++primitiveIdx;
-
-      glBindVertexArray(0);
-
-      meshIndexToVaoRange.push_back(VaoRange{
-          static_cast<GLsizei>(vaoOffset),
-          static_cast<GLsizei>(mesh.primitives.size())});
-    }
-  }
-  return vertexArrayObjects;
-}
-
-GLuint ObjectModel::createDefaultTextureObject()
-{
-  GLuint textureObject;
-  glGenTextures(1, &textureObject);
-
-  glBindTexture(GL_TEXTURE_2D, textureObject);
-
-  static constexpr const float white[] = { 1.f, 1.f, 1.f, 1.f };
-  // single white pixel.
-  glTexImage2D(
-      GL_TEXTURE_2D,
-      0,
-      GL_RGBA, // internal format
-      1, 1,
-      0, // border
-      GL_RGBA,
-      GL_FLOAT, white
-  );
-
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_REPEAT);
-
-  glBindTexture(GL_TEXTURE_2D, 0);
-
-  return textureObject;
-}
-
-std::vector<GLuint> ObjectModel::createTextureObjects(tinygltf::Model & model)
-{
-  std::vector<GLuint> textureObjects(model.textures.size());
-
-  glGenTextures(static_cast<GLsizei>(textureObjects.size()), textureObjects.data());
-
-  static tinygltf::Sampler defaultSampler;
-  {
-    defaultSampler.minFilter = GL_LINEAR;
-    defaultSampler.magFilter = GL_LINEAR;
-    defaultSampler.wrapS = GL_REPEAT;
-    defaultSampler.wrapT = GL_REPEAT;
-    defaultSampler.wrapR = GL_REPEAT;
-  }
-
-  std::size_t textureIdx = 0;
-  for (const auto & texture : model.textures)
-  {
-    assert(texture.source >= 0);
-
-    const tinygltf::Image & image = model.images.at(
-        static_cast<std::size_t>(texture.source));
-
-    tinygltf::Sampler & sampler = texture.sampler >= 0
-        ? model.samplers.at(static_cast<std::size_t>(texture.sampler))
-        : defaultSampler;
-
-    // all of these are optional.
-    if (sampler.minFilter < 0) {
-      sampler.minFilter = defaultSampler.minFilter;
-    }
-    if (sampler.magFilter < 0) {
-      sampler.magFilter = defaultSampler.magFilter;
-    }
-    if (sampler.wrapS < 0) {
-      sampler.wrapS = defaultSampler.wrapS;
-    }
-    if (sampler.wrapR < 0) {
-      sampler.wrapR = defaultSampler.wrapR;
-    }
-    if (sampler.wrapT < 0) {
-      sampler.wrapT = defaultSampler.wrapT;
-    }
-
-
-    // bind and fill.
-    const GLuint textureObject = textureObjects.at(textureIdx);
-    glBindTexture(GL_TEXTURE_2D, textureObject);
-    // fill the texture data on the GPU
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA, // internal format
-        image.width, image.height,
-        0, // border
-        GL_RGBA,
-        image.pixel_type, image.image.data()
-    );
-
-
-    // setting texture parameters.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sampler.minFilter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.magFilter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.wrapS);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.wrapR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, sampler.wrapT);
-
-    // Generate mipmaps if necessary
-    if (sampler.minFilter == GL_NEAREST_MIPMAP_NEAREST
-        || sampler.minFilter == GL_NEAREST_MIPMAP_LINEAR
-        || sampler.minFilter == GL_LINEAR_MIPMAP_NEAREST
-        || sampler.minFilter == GL_LINEAR_MIPMAP_LINEAR)
-    {
-      glGenerateMipmap(GL_TEXTURE_2D);
-    }
-    // unbind!
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    ++textureIdx;
-  }
-  return textureObjects;
-}
-
-void keyCallback(
-    GLFWwindow *window, int key, [[maybe_unused]] int scancode,
-    int action, [[maybe_unused]] int mods)
-{
-  if (key == GLFW_KEY_ESCAPE && action == GLFW_RELEASE) {
-    glfwSetWindowShouldClose(window, 1);
-  }
-}
 
 int ViewerApplication::run()
 {
@@ -723,8 +149,13 @@ int ViewerApplication::run()
     glBindBufferBase(GL_UNIFORM_BUFFER, AMBIENTLIGHT_BLOCK_BINDING, ambientLightBufferObject);
   }
 
-  // first load the model in order to set camera according to scene bounds.
-  ObjectModel object = ObjectModel(m_gltfFilePath, glslProgram);
+  // first load the models in order to set camera according to scene bounds.
+  std::vector<ObjectModel> objectModels;
+  objectModels.reserve(m_gltfFilePaths.size());
+  for (const auto & path : m_gltfFilePaths)
+  {
+    objectModels.emplace_back(path, glslProgram);
+  }
 
   // init random
   unsigned int seed;
@@ -742,9 +173,9 @@ int ViewerApplication::run()
   UniformDoubleDist dist;
 
   const auto getRandomSpherePos = [&rng, &dist](std::size_t number, double min, double max)
-      -> std::vector<PhysicsObject::Position>
+      -> std::vector<Position>
   {
-    std::vector<PhysicsObject::Position> positions;
+    std::vector<Position> positions;
     positions.reserve(number);
     // auto par = dist.param();
     auto par = UniformDoubleDist ::param_type(min, max);
@@ -752,41 +183,55 @@ int ViewerApplication::run()
     auto random = std::bind(dist, rng);
     for (std::size_t i = 0; i < number; ++i)
     {
-      positions.push_back({ random(), random(), random() });
+      positions.emplace_back(random(), random(), random());
     }
     return positions;
   };
 
-  // the physical objects
+  // ground is a static object -> mass to 0.
+  std::shared_ptr<PhysicsObject> groundObject = std::make_shared<PhysicsObject>(
+      0.0,
+      Position {});
+  const std::size_t groundModelIdx = 1;
+
+  // the physical representation of the objects
   double m = 1.0; // mass
   std::size_t numberObjects = 1;
-  std::vector<std::shared_ptr<PhysicsObject>> physicalObjects;
-  physicalObjects.reserve(numberObjects);
+  std::vector<std::shared_ptr<PhysicsObject>> objects;
+  std::vector<std::size_t> objectToModelIndices;
+  const std::size_t objectModelIdx = 0;
+  objects.reserve(numberObjects);
   {
-    const std::vector<PhysicsObject::Position> positions = getRandomSpherePos(
+    const std::vector<Position> positions = getRandomSpherePos(
         numberObjects,
         - static_cast<double>(numberObjects) / 2.0,
         static_cast<double>(numberObjects) / 2.0
-        );
+                                                              );
     for (std::size_t i = 0; i < numberObjects; ++i)
     {
-      physicalObjects.push_back(std::make_shared<PhysicsObject>(m, positions.at(i)));
+      objects.push_back(std::make_shared<PhysicsObject>(m,
+          groundObject->getPosition() + positions.at(i)));
+      objectToModelIndices.push_back(objectModelIdx);
     }
   }
 
+
   // Build projection matrix
   glm::vec3 bboxMin, bboxMax;
-  computeSceneBounds(object.getModel(), bboxMin, bboxMax);
+  // todo: compute scene bounds from max of all model bounds.??
+  // nah, ground model should be enough.
+  computeSceneBounds(objectModels.at(groundModelIdx).getModel(), bboxMin, bboxMax);
 
   const glm::vec3 diag = bboxMax - bboxMin;
 
   float maxDistance = glm::length(diag);
   maxDistance = maxDistance > 0.f ? maxDistance : 100.f;
+  std::cout << "max dist " << maxDistance << std::endl;
   const auto projMatrix =
       glm::perspective(70.f,
           static_cast<float>(m_nWindowWidth) / static_cast<float>(m_nWindowHeight),
           0.001f * maxDistance,
-          20.f * maxDistance * static_cast<float>(numberObjects));
+          20.f * maxDistance);
 
   auto cameraController = static_cast<std::unique_ptr<CameraController>>(
       std::make_unique<TrackballCameraController>(
@@ -840,10 +285,11 @@ int ViewerApplication::run()
   Simulation simulation;
 
   // -- objects
-  for (auto & obj : physicalObjects)
+  for (auto & obj : objects)
   {
     simulation.addKinematicObject(obj);
   }
+  simulation.addKinematicObject(groundObject);
 
   /*
   auto o1 = std::make_shared<Object>(m);
@@ -866,7 +312,7 @@ int ViewerApplication::run()
   {
     const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
     gravity = std::make_shared<Gravity>(
-        Force::Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
+        Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
         * gravityStrength);
   }
   simulation.addForceField(gravity);
@@ -909,14 +355,23 @@ int ViewerApplication::run()
       glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    for (const auto & obj : physicalObjects)
+    std::size_t physicalObjectIdx = 0;
+    for (const auto & obj : objects)
     {
       auto pos = obj->getPosition();
       glm::mat4 const rootModelMatrix = glm::translate(
           glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
                                                       );
-      object.draw(rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+      objectModels.at(objectToModelIndices.at(physicalObjectIdx)).draw(rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+      ++physicalObjectIdx;
     }
+    // ground object
+    auto pos = groundObject->getPosition();
+    glm::mat4 const rootModelMatrix = glm::translate(
+        glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
+                                                    );
+    objectModels.at(groundModelIdx).draw(rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+
   };
 
   if (!m_OutputPath.empty())
@@ -1081,13 +536,13 @@ int ViewerApplication::run()
           simulationSpeed = speed;
         }
         if (ImGui::RadioButton("Reset Objects", false)) {
-            const std::vector<PhysicsObject::Position> positions = getRandomSpherePos(numberObjects,
+            const std::vector<Position> positions = getRandomSpherePos(numberObjects,
                 - static_cast<double>(numberObjects) / 2.0,
               static_cast<double>(numberObjects) / 2.0);
             for (std::size_t i = 0; i < numberObjects; ++i)
             {
-              physicalObjects.at(i)->setVelocity(PhysicsObject::Vector { });
-              physicalObjects.at(i)->setPosition(positions.at(i));
+              objects.at(i)->setVelocity(Vector { });
+              objects.at(i)->setPosition(groundObject->getPosition() + positions.at(i));
             }
         }
 
@@ -1104,7 +559,7 @@ int ViewerApplication::run()
           const auto gravityDirGlm = glm::vec3(sinTheta * glm::cos(gravityPhi),
                                     glm::cos(gravityTheta),
                                     sinTheta * glm::sin(gravityPhi));
-          gravity->setVector(Force::Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
+          gravity->setVector(Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
                              * gravityStrength);
         }
         // ImGui::TreePop();
@@ -1132,8 +587,9 @@ int ViewerApplication::run()
   return 0;
 }
 
-ViewerApplication::ViewerApplication(const fs::path &appPath, uint32_t width,
-    uint32_t height, const fs::path &gltfFile,
+ViewerApplication::ViewerApplication(
+    const fs::path &appPath, uint32_t width, uint32_t height,
+    const std::vector<fs::path> &gltfFiles,
     const std::vector<float> &lookatArgs, const std::string &vertexShader,
     const std::string &fragmentShader, const fs::path &output) :
     m_nWindowWidth(static_cast<GLsizei>(width)),
@@ -1141,14 +597,14 @@ ViewerApplication::ViewerApplication(const fs::path &appPath, uint32_t width,
     m_AppPath{appPath},
     m_AppName{m_AppPath.stem().string()},
     m_ShadersRootPath{m_AppPath.parent_path() / "shaders"},
-    m_gltfFilePath{gltfFile},
+    m_gltfFilePaths{gltfFiles},
     m_OutputPath{output},
     m_ImGuiIniFilename{m_AppName + ".imgui.ini"},
     m_GLFWHandle {int(m_nWindowWidth), int(m_nWindowHeight),
       "glTF Viewer",
       m_OutputPath.empty()} // show the window only if m_OutputPath is empty
 {
-if (!lookatArgs.empty()) {
+  if (!lookatArgs.empty()) {
     m_hasUserCamera = true;
     m_userCamera =
         Camera{glm::vec3(lookatArgs[0], lookatArgs[1], lookatArgs[2]),
@@ -1171,4 +627,480 @@ if (!lookatArgs.empty()) {
   glfwSetKeyCallback(m_GLFWHandle.window(), keyCallback);
 
   printGLVersion();
+}
+ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
+                         const GLProgram & programme)
+{
+  loadGltfFile(modelPath, m_model);
+  m_textureObjects = createTextureObjects(m_model);
+  m_bufferObjects = createBufferObjects(m_model);
+  m_vertexArrayObjects = createVertexArrayObjects(
+      m_model, m_bufferObjects, m_meshIndexToVaoRange);
+
+  m_baseTextureLocation =
+      glGetUniformLocation(programme.glId(), BASE_TEX_UNIFORM_NAME);
+  m_metallicRoughnessTextureLocation =
+      glGetUniformLocation(programme.glId(), MR_TEX_UNIFORM_NAME);
+  m_emissionTextureLocation =
+      glGetUniformLocation(programme.glId(), EM_TEX_UNIFORM_NAME);
+  m_occlusionTextureLocation =
+      glGetUniformLocation(programme.glId(), OC_TEX_UNIFORM_NAME);
+
+  m_modelViewMatrixLocation =
+      glGetUniformLocation(programme.glId(), MV_MATRIX_UNIFORM_NAME);
+  m_modelViewProjMatrixLocation =
+      glGetUniformLocation(programme.glId(), MVP_MATRIX_UNIFORM_NAME);
+  m_normalMatrixLocation =
+      glGetUniformLocation(programme.glId(), N_MATRIX_UNIFORM_NAME);
+
+  assert(m_modelViewMatrixLocation          != -1);
+  assert(m_modelViewProjMatrixLocation      != -1);
+  assert(m_normalMatrixLocation             != -1);
+
+  assert(m_baseTextureLocation              != -1);
+  assert(m_metallicRoughnessTextureLocation != -1);
+  assert(m_emissionTextureLocation          != -1);
+  assert(m_occlusionTextureLocation          != -1);
+
+  // material UBO stuff
+  {
+    glGenBuffers(1 , &m_materialBufferObject);
+
+    // alloc on GPU
+    glBindBuffer(GL_UNIFORM_BUFFER, m_materialBufferObject);
+    glBufferData(GL_UNIFORM_BUFFER,
+                 sizeof(MaterialData),
+                 nullptr,
+                 GL_DYNAMIC_READ
+                );
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    GLuint materialBlockIndex = glGetUniformBlockIndex(programme.glId(),
+                                                       MATERIAL_UNIFORM_BUFFER_NAME);
+
+    assert(materialBlockIndex != GL_INVALID_INDEX);
+
+    glUniformBlockBinding(programme.glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
+
+    glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, m_materialBufferObject);
+  }
+
+  m_defaultTextureObject = createDefaultTextureObject();
+
+}
+
+ObjectModel::~ObjectModel()
+{
+  glDeleteTextures(static_cast<GLsizei>(m_textureObjects.size()), m_textureObjects.data());
+  glDeleteBuffers(static_cast<GLsizei>(m_bufferObjects.size()), m_bufferObjects.data());
+  glDeleteVertexArrays(static_cast<GLsizei>(m_vertexArrayObjects.size()), m_vertexArrayObjects.data());
+  glDeleteTextures(1, &m_defaultTextureObject);
+  glDeleteBuffers(1, &m_materialBufferObject);
+}
+
+void ObjectModel::bindMaterial(int materialIdx, bool useOcclusion) const
+{
+  MaterialData data;
+
+  // all of this should be defined in the shaders
+  // (and used, otherwise they get compiled-out.)
+
+  if (materialIdx >= 0) {
+    // Material binding
+    const tinygltf::Material material = m_model.materials.at(static_cast<std::size_t>(materialIdx));
+    const tinygltf::PbrMetallicRoughness & roughness = material.pbrMetallicRoughness;
+
+    data.baseColourFactor = glm::make_vec4(roughness.baseColorFactor.data());
+    data.metallicFactor = roughness.metallicFactor;
+    data.roughnessFactor = roughness.roughnessFactor;
+    data.emissiveFactor = glm::make_vec4(material.emissiveFactor.data());
+    data.occlusionStrength = useOcclusion ? material.occlusionTexture.strength : 0.f;
+
+    const int textureIdx = roughness.baseColorTexture.index;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textureIdx >= 0
+                                 ? m_textureObjects.at(static_cast<std::size_t>(textureIdx))
+                                 : m_defaultTextureObject
+                 );
+    // update
+    glUniform1i(m_baseTextureLocation, 0);
+
+    const int metallicRoughnessTextureIdx = roughness.metallicRoughnessTexture.index;
+    if (metallicRoughnessTextureIdx >= 0) {
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D,
+                    m_textureObjects.at(static_cast<std::size_t>(metallicRoughnessTextureIdx)));
+      // update
+      glUniform1i(m_metallicRoughnessTextureLocation, 1);
+    }
+
+    const int emissionTextureIdx = material.emissiveTexture.index;
+    if (emissionTextureIdx >= 0) {
+      glActiveTexture(GL_TEXTURE2);
+      glBindTexture(GL_TEXTURE_2D,
+                    m_textureObjects.at(static_cast<std::size_t>(emissionTextureIdx)));
+      glUniform1i(m_emissionTextureLocation, 2);
+    }
+    const int occlusionTextureIdx = material.occlusionTexture.index;
+    if (occlusionTextureIdx >= 0) {
+      glActiveTexture(GL_TEXTURE3);
+      glBindTexture(GL_TEXTURE_2D,
+                    m_textureObjects.at(static_cast<std::size_t>(occlusionTextureIdx)));
+      glUniform1i(m_occlusionTextureLocation, 3);
+    }
+  }
+  else
+  {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_defaultTextureObject);
+    glUniform1i(m_baseTextureLocation, 0);
+  }
+  // update UBO data
+  glBindBuffer(GL_UNIFORM_BUFFER, m_materialBufferObject);
+  GLvoid *bufferPtr = glMapBuffer(GL_UNIFORM_BUFFER, GL_WRITE_ONLY);
+  assert(bufferPtr);
+  std::memcpy(bufferPtr, &data, sizeof(MaterialData));
+  glUnmapBuffer(GL_UNIFORM_BUFFER);
+  glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+}
+
+void ObjectModel::draw(
+                       const glm::mat4 & modelMatrix,
+                       const glm::mat4 & viewMatrix,
+                       const glm::mat4 & projMatrix,
+                       bool useOcclusion) const
+{
+
+  // The recursive function that should draw a node
+  // We use a std::function because a simple lambda cannot be recursive
+  const std::function<void(int, const glm::mat4 &)> drawNode =
+      [&](int nodeIdx, const glm::mat4 &parentMatrix) {
+        const tinygltf::Node & node = m_model.nodes.at(static_cast<std::size_t>(nodeIdx));
+        const glm::mat4 childModelMatrix = getLocalToWorldMatrix(node, parentMatrix);
+
+        // if the node references a mesh
+        if (node.mesh >= 0) {
+          const glm::mat4 modelViewMatrix = viewMatrix * childModelMatrix;
+          const glm::mat4 modelViewProjectionMatrix = projMatrix * modelViewMatrix;
+          const glm::mat4 normalMatrix = glm::transpose(glm::inverse(modelViewMatrix));
+
+          glUniformMatrix4fv(
+              m_modelViewMatrixLocation,
+              1,
+              GL_FALSE,
+              glm::value_ptr(modelViewMatrix)
+                            );
+          glUniformMatrix4fv(
+              m_modelViewProjMatrixLocation,
+              1,
+              GL_FALSE,
+              glm::value_ptr(modelViewProjectionMatrix)
+                            );
+          glUniformMatrix4fv(
+              m_normalMatrixLocation,
+              1,
+              GL_FALSE,
+              glm::value_ptr(normalMatrix)
+                            );
+
+          const auto meshIdx = static_cast<std::size_t>(node.mesh);
+          const tinygltf::Mesh mesh = m_model.meshes.at(meshIdx);
+
+          std::size_t primitiveIdx = 0;
+          for (const auto & primitive : mesh.primitives) {
+            const VaoRange vaoRange = m_meshIndexToVaoRange.at(meshIdx);
+            const GLuint vao = m_vertexArrayObjects.at(
+                static_cast<std::size_t>(vaoRange.begin) + primitiveIdx);
+
+            bindMaterial(primitive.material, useOcclusion);
+
+            glBindVertexArray(vao);
+
+            // if the primitive uses indices.
+            if (primitive.indices >= 0) {
+              const tinygltf::Accessor & accessor = findAccessor(m_model, static_cast<int>(primitive.indices));
+              const tinygltf::BufferView & bufferView = findBufferView(m_model, accessor);
+              const std::size_t byteOffset = getByteOffset(accessor, bufferView);
+              const auto type = static_cast<GLenum>(accessor.componentType);
+              glDrawElements(
+                  static_cast<GLenum>(primitive.mode),
+                  static_cast<GLsizei>(accessor.count),
+                  type,
+                  reinterpret_cast<GLvoid *>(byteOffset)
+                            );
+            } else {
+              const auto accessorIdx = static_cast<std::size_t>(std::begin(
+                  primitive.attributes)->second);
+              const tinygltf::Accessor & accessor = m_model.accessors.at(accessorIdx);
+              glDrawArrays(
+                  static_cast<GLenum>(primitive.mode),
+                  0,
+                  static_cast<GLsizei>(accessor.count)
+                          );
+            }
+            for (const int childIdx : node.children) {
+              drawNode(childIdx, childModelMatrix);
+            }
+            ++primitiveIdx;
+          }
+        }
+      };
+
+  // Draw the scene referenced by gltf file
+  if (m_model.defaultScene >= 0) {
+    const auto sceneIdx = static_cast<std::size_t>(m_model.defaultScene);
+    const auto & nodes = m_model.scenes[sceneIdx].nodes;
+    std::for_each(nodes.cbegin(), nodes.cend(),
+                  [&](int nodeIdx) -> void {
+                    drawNode(nodeIdx, modelMatrix);
+                  });
+  }
+}
+
+bool ObjectModel::loadGltfFile(const std::experimental::filesystem::path & path,
+                               tinygltf::Model & model) {
+  tinygltf::TinyGLTF loader;
+  std::string err, warn;
+  bool success;
+  const std::string filePath = path.string();
+  if (path.has_extension() && path.extension().string() == ".glb")
+  {
+    // Load as binary
+    success = loader.LoadBinaryFromFile(
+        &model, &err, &warn,
+        filePath);
+  }
+  else
+  {
+    // load as text.
+    success = loader.LoadASCIIFromFile(
+        &model, &err, &warn,
+        filePath);
+  }
+  if (!err.empty()) {
+    std::cerr << "Error while parsing GLTF file: " << err << std::endl;
+  }
+  if (!warn.empty()) {
+    std::cerr << "Warning while parsing GLTF file: " << warn << std::endl;
+  }
+  if (!success) {
+    std::cerr << "Failed to parse GLTF file at " << path << std::endl;
+  }
+  return success;
+}
+
+std::vector<GLuint> ObjectModel::createBufferObjects(
+    const tinygltf::Model &model) {
+  std::vector<GLuint> bufferObjects(model.buffers.size());
+  glGenBuffers(static_cast<GLsizei>(bufferObjects.size()), bufferObjects.data());
+  for (std::size_t i = 0; i < bufferObjects.size(); ++i) {
+    glBindBuffer(GL_ARRAY_BUFFER, bufferObjects.at(i));
+    glBufferStorage(
+        GL_ARRAY_BUFFER,
+        model.buffers.at(i).data.size(),
+        model.buffers.at(i).data.data(),
+        GL_DYNAMIC_STORAGE_BIT
+                   );
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return bufferObjects;
+}
+
+std::vector<GLuint> ObjectModel::createVertexArrayObjects(
+    const tinygltf::Model & model,
+    const std::vector<GLuint> & bufferObjects,
+    std::vector<VaoRange> & meshIndexToVaoRange) {
+
+  std::vector<GLuint> vertexArrayObjects;
+
+  // should be empty, but better safe than sorry.
+  meshIndexToVaoRange.clear();
+  meshIndexToVaoRange.reserve(model.meshes.size());
+  for (const auto &mesh : model.meshes) {
+    const std::size_t vaoOffset = vertexArrayObjects.size();
+
+    vertexArrayObjects.resize(vaoOffset + mesh.primitives.size());
+    //
+    glGenVertexArrays(
+        static_cast<GLsizei>(mesh.primitives.size()),
+        vertexArrayObjects.data() + vaoOffset
+                     );
+
+    std::size_t primitiveIdx = 0;
+    for (const auto &primitive : mesh.primitives) {
+      const GLuint primitiveVao =
+          vertexArrayObjects.at(vaoOffset + primitiveIdx);
+      glBindVertexArray(primitiveVao);
+
+      static const std::array<std::pair<std::string, int>, 3> attributes = {
+          {{"POSITION", VERTEX_ATTRIB_POSITION_IDX},
+              {"NORMAL", VERTEX_ATTRIB_NORMAL_IDX},
+              {"TEXCOORD_0", VERTEX_ATTRIB_TEXCOORD0_IDX}}};
+
+      for (const auto &attribute : attributes) {
+        const auto iterator = primitive.attributes.find(attribute.first);
+        // If "POSITION", "NORMAL", etc. has not been found in the map
+        if (iterator == std::end(primitive.attributes)) {
+          continue;
+        }
+        // (*iterator).first is the key,
+        // (*iterator).second is the value, ie. the index of the accessor for this attribute
+        const tinygltf::Accessor & accessor = findAccessor(model, iterator->second);
+        const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
+        const GLuint bufferObject = findBufferObject(bufferObjects, bufferView);
+
+        // checking that the buffer view indeed targets ABO.
+        assert(bufferView.target == GL_ARRAY_BUFFER);
+
+        // Enable the vertex attrib array corresponding to POSITION with glEnableVertexAttribArray (you need to use VERTEX_ATTRIB_POSITION_IDX which has to be defined at the top of the cpp file)
+        glEnableVertexAttribArray(attribute.second);
+        // Bind the buffer object to GL_ARRAY_BUFFER
+        glBindBuffer(GL_ARRAY_BUFFER, bufferObject);
+        // Compute the total byte offset using the accessor and the buffer view
+        const std::size_t byteOffset = getByteOffset(accessor, bufferView);
+        // Call glVertexAttribPointer with the correct arguments.
+        // Remember size is obtained with accessor.type,
+        // type is obtained with accessor.componentType.
+        // The stride is obtained in the bufferView,
+        // normalized is always GL_FALSE,
+        // and pointer is the byteOffset (don't forget the cast).
+        glVertexAttribPointer(
+            attribute.second,
+            accessor.type,
+            static_cast<GLenum>(accessor.componentType),
+            GL_FALSE,
+            static_cast<GLsizei>(bufferView.byteStride),
+            reinterpret_cast<GLvoid *>(byteOffset)
+                             );
+      }
+      if (primitive.indices >= 0) {
+        const tinygltf::Accessor & accessor = findAccessor(model, primitive.indices);
+        const tinygltf::BufferView & bufferView = findBufferView(model, accessor);
+        const GLuint bufferObject = findBufferObject(bufferObjects, bufferView);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufferObject);
+      }
+      ++primitiveIdx;
+
+      glBindVertexArray(0);
+
+      meshIndexToVaoRange.push_back(VaoRange{
+          static_cast<GLsizei>(vaoOffset),
+          static_cast<GLsizei>(mesh.primitives.size())});
+    }
+  }
+  return vertexArrayObjects;
+}
+
+GLuint ObjectModel::createDefaultTextureObject()
+{
+  GLuint textureObject;
+  glGenTextures(1, &textureObject);
+
+  glBindTexture(GL_TEXTURE_2D, textureObject);
+
+  static constexpr const float white[] = { 1.f, 1.f, 1.f, 1.f };
+  // single white pixel.
+  glTexImage2D(
+      GL_TEXTURE_2D,
+      0,
+      GL_RGBA, // internal format
+      1, 1,
+      0, // border
+      GL_RGBA,
+      GL_FLOAT, white
+              );
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  return textureObject;
+}
+
+std::vector<GLuint> ObjectModel::createTextureObjects(tinygltf::Model & model)
+{
+  std::vector<GLuint> textureObjects(model.textures.size());
+
+  glGenTextures(static_cast<GLsizei>(textureObjects.size()), textureObjects.data());
+
+  static tinygltf::Sampler defaultSampler;
+  {
+    defaultSampler.minFilter = GL_LINEAR;
+    defaultSampler.magFilter = GL_LINEAR;
+    defaultSampler.wrapS = GL_REPEAT;
+    defaultSampler.wrapT = GL_REPEAT;
+    defaultSampler.wrapR = GL_REPEAT;
+  }
+
+  std::size_t textureIdx = 0;
+  for (const auto & texture : model.textures)
+  {
+    assert(texture.source >= 0);
+
+    const tinygltf::Image & image = model.images.at(
+        static_cast<std::size_t>(texture.source));
+
+    tinygltf::Sampler & sampler = texture.sampler >= 0
+                                  ? model.samplers.at(static_cast<std::size_t>(texture.sampler))
+                                  : defaultSampler;
+
+    // all of these are optional.
+    if (sampler.minFilter < 0) {
+      sampler.minFilter = defaultSampler.minFilter;
+    }
+    if (sampler.magFilter < 0) {
+      sampler.magFilter = defaultSampler.magFilter;
+    }
+    if (sampler.wrapS < 0) {
+      sampler.wrapS = defaultSampler.wrapS;
+    }
+    if (sampler.wrapR < 0) {
+      sampler.wrapR = defaultSampler.wrapR;
+    }
+    if (sampler.wrapT < 0) {
+      sampler.wrapT = defaultSampler.wrapT;
+    }
+
+
+    // bind and fill.
+    const GLuint textureObject = textureObjects.at(textureIdx);
+    glBindTexture(GL_TEXTURE_2D, textureObject);
+    // fill the texture data on the GPU
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA, // internal format
+        image.width, image.height,
+        0, // border
+        GL_RGBA,
+        image.pixel_type, image.image.data()
+                );
+
+
+    // setting texture parameters.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sampler.minFilter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.magFilter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.wrapS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.wrapR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, sampler.wrapT);
+
+    // Generate mipmaps if necessary
+    if (sampler.minFilter == GL_NEAREST_MIPMAP_NEAREST
+        || sampler.minFilter == GL_NEAREST_MIPMAP_LINEAR
+        || sampler.minFilter == GL_LINEAR_MIPMAP_NEAREST
+        || sampler.minFilter == GL_LINEAR_MIPMAP_LINEAR)
+    {
+      glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    // unbind!
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    ++textureIdx;
+  }
+  return textureObjects;
 }
