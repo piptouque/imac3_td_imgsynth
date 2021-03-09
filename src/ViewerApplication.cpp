@@ -95,7 +95,7 @@ class DirectionalLight
 
     void setDirection(glm::vec3 a_dir)
     {
-      m_dir = a_dir;
+      m_dir = (1.f / a_dir.length()) * a_dir;
       const glm::vec2 euler = computeEulerAngles(m_dir);
       m_theta = euler.x;
       m_phi = euler.y;
@@ -122,7 +122,9 @@ class DirectionalLight
       // Not good.
       const float theta = glm::acos(dir.y);
       const float sinTheta = glm::sin(theta);
-      const float phi = glm::acos(dir.x / sinTheta);
+      const float phi = glm::abs(sinTheta) < std::numeric_limits<float>::min()
+         ? glm::half_pi<float>()
+         : glm::acos(dir.x / sinTheta);
       return glm::vec2(theta, phi);
     }
 
@@ -581,7 +583,16 @@ int ViewerApplication::run()
   bool enabledPhysicsUpdate = false;
   double h = 0.05;
 
-  Force::Vector gravityDir = { 0.0, - 1.0, 0.0 };
+  float gravityTheta = 0.f;
+  float gravityPhi = glm::pi<float>();
+  const auto computeDirFromEuler = [](float theta, float phi) -> glm::vec3
+  {
+    const float sinTheta = glm::sin(theta);
+    return glm::vec3(sinTheta * glm::cos(phi),
+                     glm::cos(theta),
+                     sinTheta * glm::sin(phi));
+  };
+
   double gravityStrength = 9.81;
 
   Simulation simulation;
@@ -609,7 +620,13 @@ int ViewerApplication::run()
   simulation.addForce(spring);
    */
 
-  auto gravity = std::make_shared<Gravity>(gravityDir * gravityStrength);
+  std::shared_ptr<Gravity> gravity;
+  {
+    const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
+    gravity = std::make_shared<Gravity>(
+        Force::Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
+        * gravityStrength);
+  }
   simulation.addForceField(gravity);
 
   //
@@ -928,38 +945,27 @@ int ViewerApplication::run()
         }
       }
       if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
-        glm::vec3 gravityDirGlm = glm::vec3(gravityDir.get<0>(), gravityDir.get<1>(), gravityDir.get<2>());
-        auto euler = glm::vec2(); // glm::eulerAngles(quat);
-        {
-          euler.x = glm::acos(gravityDirGlm.y);
-          const float sinTheta = glm::sin(euler.x);
-          euler.y = glm::acos(gravityDirGlm.x / sinTheta);
-        }
+        glm::vec3 gravityDirGlm;
         auto strength = static_cast<float>(gravityStrength);
 
         if (ImGui::RadioButton("Enable Physics", enabledPhysicsUpdate)) {
           enabledPhysicsUpdate = !enabledPhysicsUpdate;
         }
 
-        bool hasGravityDirChanged = false;
-        hasGravityDirChanged |= ImGui::SliderAngle("GravityTheta", &euler.x ,-180.f, 180.f);
-        hasGravityDirChanged |= ImGui::SliderAngle("GravityPhi",   &euler.y ,-180.f, 180.f);
+        bool hasGravityChanged = false;
+        hasGravityChanged |= ImGui::SliderAngle("GravityTheta", &gravityTheta ,-180.f, 180.f);
+        hasGravityChanged |= ImGui::SliderAngle("GravityPhi",   &gravityPhi,-180.f, 180.f);
 
-        if (hasGravityDirChanged) {
-          const float sinTheta = glm::sin(euler.x);
-          gravityDirGlm = glm::vec3(sinTheta * glm::cos(euler.y),
-                           glm::cos(euler.x),
-                           sinTheta * glm::sin(euler.y));
-          gravityDir = { gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z };
-        }
+        hasGravityChanged = ImGui::SliderFloat("GravityStrength", &strength, 0.f, 20.f);
 
-        bool hasGravityStrengthChanged = ImGui::SliderFloat("GravityStrength", &strength, 0.f, 20.f);
-        if (hasGravityStrengthChanged) {
+        if (hasGravityChanged) {
           gravityStrength = strength;
-        }
-
-        if (hasGravityDirChanged || hasGravityStrengthChanged) {
-          gravity->setVector(gravityDir * gravityStrength);
+          const float sinTheta = glm::sin(gravityTheta);
+          gravityDirGlm = glm::vec3(sinTheta * glm::cos(gravityPhi),
+                                    glm::cos(gravityTheta),
+                                    sinTheta * glm::sin(gravityPhi));
+          gravity->setVector(Force::Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
+                             * gravityStrength);
         }
       }
       ImGui::End();
