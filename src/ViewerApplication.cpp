@@ -581,7 +581,7 @@ int ViewerApplication::run()
   // Physics
 
   bool enabledPhysicsUpdate = false;
-  double h = 0.05;
+  double simulationStep = 0.05;
 
   float gravityTheta = 0.f;
   float gravityPhi = glm::pi<float>();
@@ -860,7 +860,7 @@ int ViewerApplication::run()
     if (enabledPhysicsUpdate)
     {
       accH += deltaTime;
-      if (accH >= h) {
+      if (accH >= simulationStep) {
         // update physics.
         simulation.stepDelta(accH);
         accH = 0.0;
@@ -945,6 +945,12 @@ int ViewerApplication::run()
         }
       }
       if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto step = static_cast<float>(simulationStep);
+        if (ImGui::SliderFloat("Simulation Step", &step, 0.f, 1.f))
+        {
+          simulationStep = step;
+        }
+
         glm::vec3 gravityDirGlm;
         auto strength = static_cast<float>(gravityStrength);
 
