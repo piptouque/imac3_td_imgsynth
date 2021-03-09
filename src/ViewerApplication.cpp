@@ -582,9 +582,11 @@ int ViewerApplication::run()
 
   bool enabledPhysicsUpdate = false;
   double simulationStep = 0.05;
+  // a multiplier to speed the simulation up or slow it down.
+  double simulationSpeed = 1.0;
 
-  float gravityTheta = 0.f;
-  float gravityPhi = glm::pi<float>();
+  float gravityTheta = glm::pi<float>();
+  float gravityPhi = 0.f;
   const auto computeDirFromEuler = [](float theta, float phi) -> glm::vec3
   {
     const float sinTheta = glm::sin(theta);
@@ -862,7 +864,7 @@ int ViewerApplication::run()
       accH += deltaTime;
       if (accH >= simulationStep) {
         // update physics.
-        simulation.stepDelta(accH);
+        simulation.stepDelta(accH * simulationSpeed);
         accH = 0.0;
       }
     }
@@ -950,6 +952,11 @@ int ViewerApplication::run()
         {
           simulationStep = step;
         }
+        auto speed = static_cast<float>(simulationSpeed);
+        if (ImGui::SliderFloat("Simulation Speed", &speed, 0.f, 5.f))
+        {
+          simulationSpeed = speed;
+        }
 
         glm::vec3 gravityDirGlm;
         auto strength = static_cast<float>(gravityStrength);
@@ -962,7 +969,7 @@ int ViewerApplication::run()
         hasGravityChanged |= ImGui::SliderAngle("GravityTheta", &gravityTheta ,-180.f, 180.f);
         hasGravityChanged |= ImGui::SliderAngle("GravityPhi",   &gravityPhi,-180.f, 180.f);
 
-        hasGravityChanged = ImGui::SliderFloat("GravityStrength", &strength, 0.f, 20.f);
+        hasGravityChanged |= ImGui::SliderFloat("GravityStrength", &strength, 0.f, 20.f);
 
         if (hasGravityChanged) {
           gravityStrength = strength;
