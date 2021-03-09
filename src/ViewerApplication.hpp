@@ -5,7 +5,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/shaders.hpp"
 
-namespace tinygltf { class Model; class VaoRange; }
+#include <tiny_gltf.h>
 
 class ViewerApplication
 {
@@ -27,10 +27,50 @@ private:
     GLsizei count; // Number of elements in range
   };
 
+  class Object
+  {
+  public:
+    /** -- methods -- **/
+    explicit Object(const std::experimental::filesystem::path & modelPath, const GLProgram & programme);
+    ~Object();
+
+    [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
+
+    void draw(const glm::mat4 & modelMatrix,
+        const glm::mat4 & viewMatrix,
+        const glm::mat4 & projMatrix,
+        bool useOcclusion = true) const;
+  private:
+    /** -- methods -- **/
+    void bindMaterial(int materialIdx, bool useOcclusion) const;
+
+    /** -- fields -- **/
+    tinygltf::Model m_model;
+
+    std::vector<GLuint> m_textureObjects;
+    std::vector<GLuint> m_bufferObjects;
+    std::vector<VaoRange> m_meshIndexToVaoRange;
+    std::vector<GLuint> m_vertexArrayObjects ;
+
+    GLint m_baseTextureLocation;
+    GLint m_metallicRoughnessTextureLocation;
+    GLint m_emissionTextureLocation;
+    GLint m_occlusionTextureLocation;
+    GLint m_modelViewMatrixLocation;
+    GLint m_modelViewProjMatrixLocation;
+    GLint m_normalMatrixLocation;
+
+    GLuint m_materialBufferObject;
+    // could be static, but whatever.
+    GLuint m_defaultTextureObject;
+  };
+
+
   ///
   /// \param model
   /// \return Success
-  bool loadGltfFile(tinygltf::Model & model) const;
+  static bool loadGltfFile(const std::experimental::filesystem::path & path,
+      tinygltf::Model & model);
   ///
   /// \param model
   /// \return

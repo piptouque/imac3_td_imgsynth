@@ -12,6 +12,11 @@ struct DirectionalLight
    vec4 radiance;
 };
 
+struct AmbientLight
+{
+   vec4 radiance;
+};
+
 struct PBRMaterial
 {
    vec4 baseColourFactor;
@@ -29,6 +34,11 @@ layout(std430) buffer sDirectionalLight
 layout(std140) uniform bMaterial
 {
    PBRMaterial material;
+};
+
+layout(std140) uniform bAmbientLight
+{
+   AmbientLight ambient;
 };
 
 uniform sampler2D uBaseTexture;
@@ -124,15 +134,19 @@ void main()
 
    vec3 diffuseColour  = (1 - F) * colourDiff;
    vec3 specularColour = F;
+   vec3 ambientColour = baseColour * ambient.radiance.rgb;
 
    // Apply bidirectional reflectance distribution functions (BRDF)
    diffuseColour   *= computeDiffuseBrdf();
    specularColour  *= computeSpecularBrdf(NdotL, NdotV, NdotH, HdotL, HdotV, alphaSquared);
 
+
    // Only diffuse indirect lighting should be affected by ambient occlusion.
    const vec3 occludedDiffuseColour = mix(diffuseColour, diffuseColour * occlusion, float(material.occlusionStrength));
+   const vec3 occludedAmbientColour = mix(ambientColour, ambientColour * occlusion, float(material.occlusionStrength));
 
-   vec3 indirectColour = (occludedDiffuseColour + specularColour) * directional.radiance.rgb * NdotL;
+   const vec3 indirectColour = (occludedDiffuseColour + specularColour) * (directional.radiance.rgb * NdotL);
 
-   fColour = LINEARtoSRGB(indirectColour + emissiveColour);
+
+   fColour = LINEARtoSRGB(indirectColour + emissiveColour + occludedAmbientColour);
 }
