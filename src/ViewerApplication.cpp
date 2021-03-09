@@ -514,23 +514,36 @@ int ViewerApplication::run()
   RandomGenerator rng(seed);
   UniformDoubleDist dist;
 
+  const auto getRandomSpherePos = [&rng, &dist](std::size_t number, double min, double max)
+      -> std::vector<Object::Position>
+  {
+    std::vector<Object::Position> positions;
+    positions.reserve(number);
+    // auto par = dist.param();
+    auto par = UniformDoubleDist ::param_type(min, max);
+    dist.param(par);
+    auto random = std::bind(dist, rng);
+    for (std::size_t i = 0; i < number; ++i)
+    {
+      positions.push_back({ random(), random(), random() });
+    }
+    return positions;
+  };
+
   // the objects
   double m = 1.0; // mass
   std::size_t numberSpheres = 1;
   std::vector<std::shared_ptr<Object>> spheres;
   spheres.reserve(numberSpheres);
   {
-    // auto par = dist.param();
-    auto par = UniformDoubleDist ::param_type(
+    const std::vector<Object::Position> positions = getRandomSpherePos(
+        numberSpheres,
         - static_cast<double>(numberSpheres) / 2.0,
         static_cast<double>(numberSpheres) / 2.0
-                                             );
-    dist.param(par);
-    auto random = std::bind(dist, rng);
+        );
     for (std::size_t i = 0; i < numberSpheres; ++i)
     {
-      Object::Position pos = { random(), random(), random() };
-      spheres.push_back(std::make_shared<Object>(m, pos));
+      spheres.push_back(std::make_shared<Object>(m, positions.at(i)));
     }
   }
 
@@ -947,24 +960,31 @@ int ViewerApplication::run()
         }
       }
       if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::RadioButton("Enable Physics", enabledPhysicsUpdate)) {
+          enabledPhysicsUpdate = !enabledPhysicsUpdate;
+        }
         auto step = static_cast<float>(simulationStep);
-        if (ImGui::SliderFloat("Simulation Step", &step, 0.f, 1.f))
-        {
+        if (ImGui::SliderFloat("Simulation Step", &step, 0.f, 1.f)) {
           simulationStep = step;
         }
         auto speed = static_cast<float>(simulationSpeed);
-        if (ImGui::SliderFloat("Simulation Speed", &speed, 0.f, 5.f))
-        {
+        if (ImGui::SliderFloat("Simulation Speed", &speed, 0.f, 5.f)) {
           simulationSpeed = speed;
+        }
+        if (ImGui::RadioButton("Reset Objects", false)) {
+            const std::vector<Object::Position> positions = getRandomSpherePos(
+                numberSpheres,
+                - static_cast<double>(numberSpheres) / 2.0,
+              static_cast<double>(numberSpheres) / 2.0);
+            for (std::size_t i = 0; i < numberSpheres; ++i)
+            {
+              spheres.at(i)->setVelocity(Object::Vector { });
+              spheres.at(i)->setPosition(positions.at(i));
+            }
         }
 
         glm::vec3 gravityDirGlm;
         auto strength = static_cast<float>(gravityStrength);
-
-        if (ImGui::RadioButton("Enable Physics", enabledPhysicsUpdate)) {
-          enabledPhysicsUpdate = !enabledPhysicsUpdate;
-        }
-
         bool hasGravityChanged = false;
         hasGravityChanged |= ImGui::SliderAngle("GravityTheta", &gravityTheta ,-180.f, 180.f);
         hasGravityChanged |= ImGui::SliderAngle("GravityPhi",   &gravityPhi,-180.f, 180.f);
