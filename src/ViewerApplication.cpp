@@ -20,7 +20,7 @@
 #include <cant/physics/PhysicsSimulation.hpp>
 
 using Simulation = cant::physics::PhysicsSimulation<3, double>;
-using PhysicsObject = Simulation::Object;
+using PhysicsObject = Simulation::Kinetic;
 using Force = Simulation::Force;
 using ForceField = Simulation::ForceField;
 
@@ -198,23 +198,6 @@ int ViewerApplication::run()
 
   Simulation simulation;
 
-  /*
-   * todo: flag with set of Hooke springs.
-  auto o1 = std::make_shared<Object>(m);
-  auto o2 = std::make_shared<Object>(m);
-
-  simulation.addKinematicObject(o1);
-  simulation.addKinematicObject(o2);
-
-  // -- forces
-
-  double k = 20.0;
-  double l0 = 0.5;
-
-   // fixme: for some reason I need to cast it to Force outside of addForce.
-  auto spring = static_cast<std::shared_ptr<Force>>(std::make_shared<HookSpring>(k, l0, o1, o2));
-  simulation.addForce(spring);
-   */
 
   std::shared_ptr<Gravity> gravity;
   {
@@ -266,24 +249,61 @@ int ViewerApplication::run()
 
   // the physical representation of the objects
   double m = 1.0; // mass
-  std::size_t numberObjects = 1;
-  std::vector<std::shared_ptr<PhysicsObject>> objects;
-  std::vector<std::size_t> objectToModelIndices;
-  const std::size_t objectModelIdx = 0;
-  objects.reserve(numberObjects);
+  std::size_t numberBallObjects = 1;
+  std::vector<std::shared_ptr<PhysicsObject>> ballObjects;
+  std::vector<std::size_t> ballObjectToModelIndices;
+  const std::size_t ballObjectModelIdx = 0;
+  ballObjects.reserve(numberBallObjects);
   {
-    const std::vector<Position> positions = getRandomSpherePos(
-        numberObjects,
-        - static_cast<double>(numberObjects) / 2.0,
-        static_cast<double>(numberObjects) / 2.0
+    const std::vector<Position> ballPositions = getRandomSpherePos(
+        numberBallObjects,
+        - static_cast<double>(numberBallObjects) / 2.0,
+        static_cast<double>(numberBallObjects) / 2.0
                                                               );
-    for (std::size_t i = 0; i < numberObjects; ++i)
+    for (std::size_t i = 0; i < numberBallObjects; ++i)
     {
-      objects.push_back(std::make_shared<PhysicsObject>(m,
-           positions.at(i)));
-      objectToModelIndices.push_back(objectModelIdx);
-      simulation.addKinematicObject(objects.back());
+      ballObjects.push_back(std::make_shared<PhysicsObject>(m, ballPositions.at(i)));
+      ballObjectToModelIndices.push_back(ballObjectModelIdx);
+      simulation.addKinematicObject(ballObjects.back());
     }
+  }
+
+  // the objects used in the flag simulation.
+  std::size_t numberFlagColumns = 10;
+  std::size_t numberFlagRows = 10;
+  // column-major.
+  std::vector<std::vector<std::shared_ptr<PhysicsObject>>> flagObjects;
+  std::vector<std::vector<Position>> flagPositions;
+  const Position flagPositionOffset = { 0, 5, 0 };
+  const double flagPositionStep = 1.5;
+  const std::size_t flagObjectModelIdx = 0;
+  flagObjects.reserve(numberFlagRows);
+  flagPositions.reserve(numberFlagRows);
+  for (std::size_t y = 0; y < numberFlagRows; ++y)
+  {
+    flagObjects.emplace_back();
+    flagObjects.back().reserve(numberFlagColumns);
+    flagPositions.emplace_back();
+    flagPositions.back().reserve(numberFlagColumns);
+    for (std::size_t x = 0; x < numberFlagColumns; ++x)
+    {
+      flagPositions.back().push_back(flagPositionOffset + flagPositionStep * Position { x, y, 0 });
+      // note: the first column (hoist) should not move -> null mass.
+      auto flagObject = std::make_shared<PhysicsObject>(
+          x == 0 ? 0.0 : m,
+          flagPositions.back().back());
+      flagObjects.back().push_back(std::move(flagObject));
+      simulation.addKinematicObject(flagObjects.back().back());
+    }
+
+    /*
+    // -- forces
+    double k = 20.0;
+    double l0 = 0.5;
+    // fixme: for some reason I need to cast it to Force outside of addForce.
+    auto spring = static_cast<std::shared_ptr<Force>>(std::make_shared<HookSpring>(k, l0, o1, o2));
+    simulation.addForce(spring);
+     */
   }
 
 
@@ -297,7 +317,6 @@ int ViewerApplication::run()
 
   float maxDistance = glm::length(diag);
   maxDistance = maxDistance > 0.f ? maxDistance : 100.f;
-  std::cout << "max dist " << maxDistance << std::endl;
   const auto projMatrix =
       glm::perspective(70.f,
           static_cast<float>(m_nWindowWidth) / static_cast<float>(m_nWindowHeight),
@@ -372,16 +391,32 @@ int ViewerApplication::run()
       glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    std::size_t physicalObjectIdx = 0;
-    for (const auto & obj : objects)
+    // Flag objects
+    for (const auto & flagColumn : flagObjects)
+    {
+      for (const auto & obj : flagColumn)
+      {
+        const auto pos = obj->getPosition();
+        glm::mat4 const rootModelMatrix = glm::translate(
+            glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
+                                                        );
+        objectModels.at(flagObjectModelIdx).draw(
+            materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+      }
+    }
+
+
+    // Ball objects
+    std::size_t ballObjectIdx = 0;
+    for (const auto & obj : ballObjects)
     {
       const auto pos = obj->getPosition();
       glm::mat4 const rootModelMatrix = glm::translate(
           glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
                                                       );
-      objectModels.at(objectToModelIndices.at(physicalObjectIdx)).draw(
+      objectModels.at(ballObjectToModelIndices.at(ballObjectIdx)).draw(
           materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
-      ++physicalObjectIdx;
+      ++ballObjectIdx;
     }
 
     // ground object
@@ -559,13 +594,22 @@ int ViewerApplication::run()
           simulationSpeed = speed;
         }
         if (ImGui::RadioButton("Reset Objects", false)) {
-            const std::vector<Position> positions = getRandomSpherePos(numberObjects,
-                - static_cast<double>(numberObjects) / 2.0,
-              static_cast<double>(numberObjects) / 2.0);
-            for (std::size_t i = 0; i < numberObjects; ++i)
+            const std::vector<Position> positions = getRandomSpherePos(
+              numberBallObjects,
+                - static_cast<double>(numberBallObjects) / 2.0,
+              static_cast<double>(numberBallObjects) / 2.0);
+            for (std::size_t i = 0; i < numberBallObjects; ++i)
             {
-              objects.at(i)->setVelocity(Vector { });
-              objects.at(i)->setPosition(positions.at(i));
+              ballObjects.at(i)->setVelocity(Vector { });
+              ballObjects.at(i)->setPosition(positions.at(i));
+            }
+            for (std::size_t y = 0; y < flagObjects.size(); ++y)
+            {
+              for (std::size_t x = 0; x < flagObjects.front().size(); ++x)
+              {
+                flagObjects.at(y).at(x)->setVelocity(Vector { });
+                flagObjects.at(y).at(x)->setPosition(flagPositions.at(y).at(x));
+              }
             }
         }
 
