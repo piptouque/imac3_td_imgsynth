@@ -179,7 +179,7 @@ int ViewerApplication::run()
   }
 
   // Physics
-  bool enabledPhysicsUpdate = false;
+  bool enablePhysicsUpdate = false;
   double simulationStep = 0.05;
   // a multiplier to speed the simulation up or slow it down.
   double simulationSpeed = 1.0;
@@ -248,7 +248,7 @@ int ViewerApplication::run()
   simulation.addKinematicObject(groundObject);
 
   // the physical representation of the objects
-  double m = 1.0; // mass
+  double ballMass = 1.0; // mass
   std::size_t numberBallObjects = 1;
   std::vector<std::shared_ptr<PhysicsObject>> ballObjects;
   std::vector<std::size_t> ballObjectToModelIndices;
@@ -262,16 +262,17 @@ int ViewerApplication::run()
                                                               );
     for (std::size_t i = 0; i < numberBallObjects; ++i)
     {
-      ballObjects.push_back(std::make_shared<PhysicsObject>(m, ballPositions.at(i)));
+      ballObjects.push_back(std::make_shared<PhysicsObject>(ballMass, ballPositions.at(i)));
       ballObjectToModelIndices.push_back(ballObjectModelIdx);
       simulation.addKinematicObject(ballObjects.back());
     }
   }
 
   // the objects used in the flag simulation.
+  double flagMass = 1.0;
   std::size_t numberFlagColumns = 10;
   std::size_t numberFlagRows = 10;
-  // column-major.
+  // row-major.
   std::vector<std::vector<std::shared_ptr<PhysicsObject>>> flagObjects;
   std::vector<std::vector<Position>> flagPositions;
   const Position flagPositionOffset = { 0, 5, 0 };
@@ -290,22 +291,64 @@ int ViewerApplication::run()
       flagPositions.back().push_back(flagPositionOffset + flagPositionStep * Position { x, y, 0 });
       // note: the first column (hoist) should not move -> null mass.
       auto flagObject = std::make_shared<PhysicsObject>(
-          x == 0 ? 0.0 : m,
+          x == 0 ? 0.0 : flagMass,
           flagPositions.back().back());
       flagObjects.back().push_back(std::move(flagObject));
       simulation.addKinematicObject(flagObjects.back().back());
     }
 
-    /*
-    // -- forces
-    double k = 20.0;
-    double l0 = 0.5;
-    // fixme: for some reason I need to cast it to Force outside of addForce.
-    auto spring = static_cast<std::shared_ptr<Force>>(std::make_shared<HookSpring>(k, l0, o1, o2));
-    simulation.addForce(spring);
-     */
+  }
+  // -- forces
+  // flat, since links between flag points
+  // are a bit more complicated than a grid.
+  std::vector<std::shared_ptr<HookSpring>> flagSprings;
+  // All 2D 8-adj plus distant 4-adj. -> 12 links max per objects.
+  // does not take link symmetry into account,
+  // but I guess it's all right to reserve way more space than necessary.
+  flagSprings.reserve(12 * numberFlagRows * numberFlagRows);
+  double k = 20.0;
+  double l0 = 0.5;
+  for (std::size_t y = 0; y < flagObjects.size(); ++y)
+  {
+    for (std::size_t x = 0; x < flagObjects.front().size(); ++x)
+    {
+      // figure out the neighbours.
+      std::vector<std::pair<std::size_t, std::size_t>> neighbours;
+      neighbours.reserve(12);
+      {
+        const bool shouldLinkUp          = y < flagObjects.size() - 1;
+        const bool shouldLinkRight       = x < flagObjects.front().size() - 1;
+        const bool shouldLinkUpRight     = shouldLinkUp && shouldLinkRight;
+        const bool shouldLinkUpLeft      = shouldLinkUp && x > 0;
+        const bool shouldLinkDoubleUp    = y < flagObjects.size() - 2;
+        const bool shouldLinkDoubleRight = x < flagObjects.front().size() - 2;
+        // meh.
+        if (shouldLinkUp)    neighbours.emplace_back(x, y + 1);
+        if (shouldLinkRight) neighbours.emplace_back(x + 1, y);
+        if (shouldLinkUpRight) neighbours.emplace_back(x + 1, y + 1);
+        if (shouldLinkUpLeft) neighbours.emplace_back(x - 1, y + 1);
+        if (shouldLinkDoubleUp) neighbours.emplace_back(x, y + 2);
+        if (shouldLinkDoubleRight) neighbours.emplace_back(x + 2, y);
+      }
+
+      for (const auto & p : neighbours)
+      {
+        // link with neighbour
+        auto spring = std::make_shared<HookSpring>(
+            k,
+            l0,
+            flagObjects.at(y).at(x),
+            flagObjects.at(p.second).at(p.first));
+        flagSprings.push_back(std::move(spring));
+      }
+    }
   }
 
+  // fixme: for some reason I need to cast it to Force outside of addForce.
+  for (auto & spring : flagSprings)
+  {
+    simulation.addForce(spring);
+  }
 
   // Build projection matrix
   glm::vec3 bboxMin, bboxMax;
@@ -350,7 +393,7 @@ int ViewerApplication::run()
       glm::vec3(1.f, 0.f, 0.f)};
   AmbientLight ambientLight { glm::vec3(0.678f, 0.823f, 0.892f), 0.8f };
 
-  bool useCameraLight = true;
+  bool useCameraLight = false;
   bool useOcclusion = true;
 
   //
@@ -392,9 +435,9 @@ int ViewerApplication::run()
     }
 
     // Flag objects
-    for (const auto & flagColumn : flagObjects)
+    for (const auto & flagRow : flagObjects)
     {
-      for (const auto & obj : flagColumn)
+      for (const auto & obj : flagRow)
       {
         const auto pos = obj->getPosition();
         glm::mat4 const rootModelMatrix = glm::translate(
@@ -471,7 +514,7 @@ int ViewerApplication::run()
     const double deltaTime = currentTime - time;
     time = currentTime;
 
-    if (enabledPhysicsUpdate)
+    if (enablePhysicsUpdate)
     {
       accH += deltaTime;
       if (accH >= simulationStep) {
@@ -532,38 +575,39 @@ int ViewerApplication::run()
         }
       }
       if (ImGui::CollapsingHeader("Lighting")) {
-        if (ImGui::RadioButton("Use occlusions", useOcclusion)) {
+        if (ImGui::RadioButton("Enable occlusions", useOcclusion)) {
           useOcclusion = !useOcclusion;
         }
-        if (ImGui::CollapsingHeader("Ambient")) {
+        if (ImGui::TreeNode("Ambient")) {
           glm::vec3 colourGlm = ambientLight.getColour();
           ImVec4 colour = ImVec4(colourGlm.r, colourGlm.g, colourGlm.b, 0.f);
           float intensity = ambientLight.getIntensity();
 
-          if (ImGui::ColorEdit3("Ambient Colour", &colour.x)) {
+          if (ImGui::ColorEdit3("Colour", &colour.x)) {
             colourGlm = glm::vec3(colour.x, colour.y, colour.z);
             ambientLight.setColour(colourGlm);
             auto clearColour = ambientLight.getRadiance();
             glClearColor(clearColour.r, clearColour.g, clearColour.b, 1.f);
           }
-          if (ImGui::SliderFloat("Ambient Intensity", &intensity, 0.f, 1.f)) {
+          if (ImGui::SliderFloat("Intensity", &intensity, 0.f, 1.f)) {
             ambientLight.setIntensity(intensity);
             auto clearColour = ambientLight.getRadiance();
             glClearColor(clearColour.r, clearColour.g, clearColour.b, 1.f);
           }
+          ImGui::TreePop();
         }
 
-        if (ImGui::CollapsingHeader("Directional")) {
+        if (ImGui::TreeNode("Directional")) {
           glm::vec2 euler = directionalLight.getEulerAngles();
           glm::vec3 colourGlm = directionalLight.getColour();
           ImVec4 colour = ImVec4(colourGlm.r, colourGlm.g, colourGlm.b, 0.f);
           float intensity = directionalLight.getIntensity();
 
-          if (ImGui::ColorEdit3("Directional Colour", &colour.x)) {
+          if (ImGui::ColorEdit3("Colour", &colour.x)) {
             colourGlm = glm::vec3(colour.x, colour.y, colour.z);
             directionalLight.setColour(colourGlm);
           }
-          if (ImGui::SliderFloat("Directional Intensity", &intensity, 0.f, 1.f)) {
+          if (ImGui::SliderFloat("Intensity", &intensity, 0.f, 1.f)) {
             directionalLight.setIntensity(intensity);
           }
 
@@ -578,12 +622,12 @@ int ViewerApplication::run()
             directionalLight.setDirection(euler.x, euler.y);
           }
 
+          ImGui::TreePop();
         }
-        // ImGui::TreePop();
       }
       if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::RadioButton("Enable Physics", enabledPhysicsUpdate)) {
-          enabledPhysicsUpdate = !enabledPhysicsUpdate;
+        if (ImGui::RadioButton("Enable Physics", enablePhysicsUpdate)) {
+          enablePhysicsUpdate = !enablePhysicsUpdate;
         }
         auto step = static_cast<float>(simulationStep);
         if (ImGui::SliderFloat("Simulation Step", &step, 0.f, 1.f)) {
@@ -613,23 +657,80 @@ int ViewerApplication::run()
             }
         }
 
-        auto strength = static_cast<float>(gravityStrength);
-        bool hasGravityChanged = false;
-        hasGravityChanged |= ImGui::SliderAngle("GravityTheta", &gravityTheta ,-180.f, 180.f);
-        hasGravityChanged |= ImGui::SliderAngle("GravityPhi",   &gravityPhi,-180.f, 180.f);
+        if (ImGui::TreeNode("Gravity"))
+        {
+          auto strength = static_cast<float>(gravityStrength);
+          bool hasGravityChanged = false;
+          hasGravityChanged |= ImGui::SliderAngle("Theta", &gravityTheta ,-180.f, 180.f);
+          hasGravityChanged |= ImGui::SliderAngle("Phi",   &gravityPhi,-180.f, 180.f);
 
-        hasGravityChanged |= ImGui::SliderFloat("GravityStrength", &strength, 0.f, 20.f);
+          hasGravityChanged |= ImGui::SliderFloat("Strength", &strength, 0.f, 20.f);
 
-        if (hasGravityChanged) {
-          gravityStrength = strength;
-          const float sinTheta = glm::sin(gravityTheta);
-          const auto gravityDirGlm = glm::vec3(sinTheta * glm::cos(gravityPhi),
-                                    glm::cos(gravityTheta),
-                                    sinTheta * glm::sin(gravityPhi));
-          gravity->setVector(Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
-                             * gravityStrength);
+          if (hasGravityChanged) {
+            gravityStrength = strength;
+            const float sinTheta = glm::sin(gravityTheta);
+            const auto gravityDirGlm = glm::vec3(sinTheta * glm::cos(gravityPhi),
+                                                 glm::cos(gravityTheta),
+                                                 sinTheta * glm::sin(gravityPhi));
+            gravity->setVector(Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
+                               * gravityStrength);
+          }
+          ImGui::TreePop();
         }
-        // ImGui::TreePop();
+
+        if (ImGui::TreeNode("Ball"))
+        {
+          auto mass = static_cast<float>(ballMass);
+          bool hasBallChanged = false;
+
+          hasBallChanged |= ImGui::SliderFloat("Mass", &mass, 0.f, 100.f);
+
+          if (hasBallChanged) {
+            ballMass = mass;
+            for (auto & ball : ballObjects)
+            {
+              ball->setMass(ballMass);
+            }
+          }
+          ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Flag"))
+        {
+          auto mass = static_cast<float>(flagMass);
+          bool hasFlagChanged = false;
+
+          hasFlagChanged |= ImGui::SliderFloat("Mass", &mass, 0.f, 100.f);
+          if (hasFlagChanged)
+          {
+            flagMass = mass;
+            // do *not* set the mass of the hoist, these should stay static!
+            for (std::size_t y = 0; y < flagObjects.size(); ++y)
+            {
+              for (std::size_t x = 1; x < flagObjects.front().size(); ++x)
+              {
+                flagObjects.at(y).at(x)->setMass(flagMass);
+              }
+            }
+          }
+
+          auto stiffness = static_cast<float>(k);
+          auto restLength = static_cast<float>(l0);
+          bool haveSpringsChanged = false;
+
+          haveSpringsChanged |= ImGui::SliderFloat("k", &stiffness, 0.f, 100.f);
+          haveSpringsChanged |= ImGui::SliderFloat("l0", &restLength, 0.f, 20.f);
+          if (haveSpringsChanged) {
+            k = stiffness;
+            l0 = restLength;
+            for (auto & spring : flagSprings)
+            {
+              spring->setStiffness(k);
+              spring->setRestLength(l0);
+            }
+          }
+          ImGui::TreePop();
+        }
       }
       ImGui::End();
     }
