@@ -20,12 +20,14 @@
 #include <cant/physics/PhysicsSimulation.hpp>
 
 using Simulation = cant::physics::PhysicsSimulation<3, double>;
-using PhysicsObject = Simulation::Kinetic;
+using Dynamic = Simulation::Dynamic;
+using Rigidbody = Simulation::Rigid;
+using Shape = Rigidbody::Shape;
 using Force = Simulation::Force;
 using ForceField = Simulation::ForceField;
 
-using Position = PhysicsObject::Position;
-using Vector = PhysicsObject::Vector;
+using Position = Dynamic::Position;
+using Vector = Dynamic::Vector;
 
 using HookSpring = cant::physics::HookeSpringLink<3, double>;
 using Gravity = cant::physics::UniformForceField<3, double>;
@@ -241,16 +243,16 @@ int ViewerApplication::run()
   };
 
   // ground is a static object -> mass to 0.
-  std::shared_ptr<PhysicsObject> groundObject = std::make_shared<PhysicsObject>(
+  std::shared_ptr<Dynamic> groundObject = std::make_shared<Dynamic>(
       0.0,
       3.0 * Position { -1.0, -1.0, -1.0 });
   const std::size_t groundModelIdx = 1;
-  simulation.addKinematicObject(groundObject);
+  simulation.addDynamicObject(groundObject);
 
   // the physical representation of the objects
   double ballMass = 1.0; // mass
   std::size_t numberBallObjects = 1;
-  std::vector<std::shared_ptr<PhysicsObject>> ballObjects;
+  std::vector<std::shared_ptr<Dynamic>> ballObjects;
   std::vector<std::size_t> ballObjectToModelIndices;
   const std::size_t ballObjectModelIdx = 0;
   ballObjects.reserve(numberBallObjects);
@@ -262,23 +264,24 @@ int ViewerApplication::run()
                                                               );
     for (std::size_t i = 0; i < numberBallObjects; ++i)
     {
-      ballObjects.push_back(std::make_shared<PhysicsObject>(ballMass, ballPositions.at(i)));
+      ballObjects.push_back(std::make_shared<Dynamic>(ballMass, ballPositions.at(i)));
       ballObjectToModelIndices.push_back(ballObjectModelIdx);
-      simulation.addKinematicObject(ballObjects.back());
+      simulation.addDynamicObject(ballObjects.back());
     }
   }
 
   // the objects used in the flag simulation.
   double flagMass = 1.0;
-  std::size_t numberFlagColumns = 10;
-  std::size_t numberFlagRows = 10;
+  double flagRadius = 1.0;
+  std::size_t numberFlagColumns = 15;
+  std::size_t numberFlagRows = 15;
   // row-major.
-  std::vector<std::vector<std::shared_ptr<PhysicsObject>>> flagObjects;
+  std::vector<std::vector<std::shared_ptr<Rigidbody>>> flagObjects;
   std::vector<std::vector<Position>> flagPositions;
   const Position flagPositionOffset = { 0, 5, 0 };
   const double flagPositionStep = 1.5;
   const std::size_t flagObjectModelIdx = 0;
-  flagObjects.reserve(numberFlagRows);
+  auto flagShape = std::make_shared<Shape>(Position {}, flagRadius);
   flagPositions.reserve(numberFlagRows);
   for (std::size_t y = 0; y < numberFlagRows; ++y)
   {
@@ -290,11 +293,12 @@ int ViewerApplication::run()
     {
       flagPositions.back().push_back(flagPositionOffset + flagPositionStep * Position { x, y, 0 });
       // note: the first column (hoist) should not move -> null mass.
-      auto flagObject = std::make_shared<PhysicsObject>(
+      auto flagObject = std::make_unique<Dynamic>(
           x == 0 ? 0.0 : flagMass,
           flagPositions.back().back());
-      flagObjects.back().push_back(std::move(flagObject));
-      simulation.addKinematicObject(flagObjects.back().back());
+      flagObjects.back().push_back(
+          std::make_shared<Rigidbody>(std::move(flagObject), flagShape));
+      simulation.addRigidObject(flagObjects.back().back());
     }
 
   }
@@ -308,38 +312,29 @@ int ViewerApplication::run()
   flagSprings.reserve(12 * numberFlagRows * numberFlagRows);
   double k = 20.0;
   double l0 = 0.5;
+  std::vector<std::pair<int, int>> const neighbourOffsets =
+      {
+          { 1, 0 }, { 0, 1 }, { 1, 1 }, { -1, 1}, { 2, 0 }, { 0, 2}
+      };
   for (std::size_t y = 0; y < flagObjects.size(); ++y)
   {
     for (std::size_t x = 0; x < flagObjects.front().size(); ++x)
     {
       // figure out the neighbours.
-      std::vector<std::pair<std::size_t, std::size_t>> neighbours;
-      neighbours.reserve(12);
+      for (const auto & offset : neighbourOffsets)
       {
-        const bool shouldLinkUp          = y < flagObjects.size() - 1;
-        const bool shouldLinkRight       = x < flagObjects.front().size() - 1;
-        const bool shouldLinkUpRight     = shouldLinkUp && shouldLinkRight;
-        const bool shouldLinkUpLeft      = shouldLinkUp && x > 0;
-        const bool shouldLinkDoubleUp    = y < flagObjects.size() - 2;
-        const bool shouldLinkDoubleRight = x < flagObjects.front().size() - 2;
-        // meh.
-        if (shouldLinkUp)    neighbours.emplace_back(x, y + 1);
-        if (shouldLinkRight) neighbours.emplace_back(x + 1, y);
-        if (shouldLinkUpRight) neighbours.emplace_back(x + 1, y + 1);
-        if (shouldLinkUpLeft) neighbours.emplace_back(x - 1, y + 1);
-        if (shouldLinkDoubleUp) neighbours.emplace_back(x, y + 2);
-        if (shouldLinkDoubleRight) neighbours.emplace_back(x + 2, y);
-      }
-
-      for (const auto & p : neighbours)
-      {
-        // link with neighbour
-        auto spring = std::make_shared<HookSpring>(
-            k,
-            l0,
-            flagObjects.at(y).at(x),
-            flagObjects.at(p.second).at(p.first));
-        flagSprings.push_back(std::move(spring));
+        auto const & p = flagObjects.at(y).at(x);
+        int const yNeighbour = static_cast<int>(y) + offset.second;
+        int const xNeighbour = static_cast<int>(x) + offset.first;
+        if (xNeighbour >= 0 && static_cast<std::size_t>(xNeighbour) < flagObjects.front().size()
+            && yNeighbour >= 0 && static_cast<std::size_t>(yNeighbour) < flagObjects.size())
+        {
+          // link with neighbour
+          auto spring = std::make_shared<HookSpring>(
+              k, l0, p,
+              flagObjects.at(static_cast<std::size_t>(yNeighbour)).at(static_cast<std::size_t>(xNeighbour)));
+          flagSprings.push_back(std::move(spring));
+        }
       }
     }
   }
