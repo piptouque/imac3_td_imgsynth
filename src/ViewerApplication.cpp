@@ -305,7 +305,14 @@ int ViewerApplication::run()
   const Position flagPositionOffset = { 0, 5, 0 };
   const double flagPositionStep = 1.5;
   const std::size_t flagObjectModelIdx = 0;
-  auto flagShape = std::make_shared<Shape>(Position {}, flagRadius);
+  // sphere shape.
+  auto flagShape = std::make_shared<Shape>(
+      [](const Position & p1, const Position & p2)
+      {
+        // L-2 norm -> sphere.
+        return p1.getDistance<2>(p2);
+      },
+      flagRadius);
   flagPositions.reserve(numberFlagRows);
   for (std::size_t y = 0; y < numberFlagRows; ++y)
   {

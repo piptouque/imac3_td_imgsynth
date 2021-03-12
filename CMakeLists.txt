@@ -74,7 +74,7 @@ set(
     THIRD_PARTY_SRC_FILES
     ${IMGUI_SRC_FILES}
     third-party/${GLAD_DIR}/src/glad.c
-)
+        third-party/cantina_common/include/cant/maths/algo.hpp)
 
 set(
     THIRD_PARTY_INCLUDE_FILES
