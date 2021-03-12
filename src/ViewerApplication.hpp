@@ -31,6 +31,9 @@ private:
   std::string m_vertexShader = "forward.vs.glsl";
   std::string m_fragmentShader = "pbr_directional_light.fs.glsl";
 
+  std::string m_wireframeVertexShader = "wireframe.vs.glsl";
+  std::string m_wireframeFragmentShader = "wireframe.fs.glsl";
+
   bool m_hasUserCamera = false;
   Camera m_userCamera;
 
@@ -58,12 +61,14 @@ class ObjectModel
 {
 public:
   /** -- methods -- **/
-  explicit ObjectModel(const fs::path & modelPath, const GLProgram & programme);
-  ~ObjectModel();
+  explicit ObjectModel(const fs::path & modelPath,
+      std::shared_ptr<GLProgram> programme,
+      std::shared_ptr<tinygltf::Material> boundMaterial);
+  virtual ~ObjectModel();
 
   [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
 
-  void draw(GLuint materialBufferIndex,
+  void draw(GLuint materialBufferObject,
             const glm::mat4 & modelMatrix,
             const glm::mat4 & viewMatrix,
             const glm::mat4 & projMatrix,
@@ -100,6 +105,9 @@ private:
 
   /** -- fields -- **/
   tinygltf::Model m_model;
+
+  std::shared_ptr<GLProgram> m_programme;
+  std::shared_ptr<tinygltf::Material> m_currentlyBoundMaterial;
 
   std::vector<GLuint> m_textureObjects;
   std::vector<GLuint> m_bufferObjects;

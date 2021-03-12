@@ -4,10 +4,10 @@
 #include <numeric>
 #include <random>
 #include <exception>
+#include <future> // todo: async.
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/io.hpp>
 
 #include "utils/cameras.hpp"
 #include "utils/gltf.hpp"
@@ -17,6 +17,7 @@
 
 #include <cant/physics/HookeSpringLink.hpp>
 #include <cant/physics/UniformForceField.hpp>
+#include <cant/physics/CustomForceField.hpp>
 #include <cant/physics/PhysicsSimulation.hpp>
 
 using Simulation = cant::physics::PhysicsSimulation<3, double>;
@@ -24,13 +25,13 @@ using Dynamic = Simulation::Dynamic;
 using Rigidbody = Simulation::Rigid;
 using Shape = Rigidbody::Shape;
 using Force = Simulation::Force;
-using ForceField = Simulation::ForceField;
 
 using Position = Dynamic::Position;
 using Vector = Dynamic::Vector;
 
 using HookSpring = cant::physics::HookeSpringLink<3, double>;
 using Gravity = cant::physics::UniformForceField<3, double>;
+using ForceField = cant::physics::CustomForceField<3, double>;
 
 using RandomGenerator = std::default_random_engine;
 using UniformDoubleDist = std::uniform_real_distribution<double>;
@@ -96,9 +97,13 @@ namespace {
 int ViewerApplication::run()
 {
   // Loader shaders
-  const auto glslProgram =
+  auto pbrProgramme = std::make_shared<GLProgram>(
       compileProgram({m_ShadersRootPath / m_vertexShader,
-          m_ShadersRootPath / m_fragmentShader});
+          m_ShadersRootPath / m_fragmentShader}));
+  auto wireframeProgramme = std::make_shared<GLProgram>(
+      compileProgram({m_ShadersRootPath / m_wireframeVertexShader,
+                      m_ShadersRootPath / m_wireframeFragmentShader}));
+  auto boundMaterial = std::make_shared<tinygltf::Material>();
 
 
   GLuint directionalLightBufferObject;
@@ -107,7 +112,7 @@ int ViewerApplication::run()
     glGenBuffers(1, &directionalLightBufferObject);
 
     const GLuint lightStorageBlockIndex =
-        glGetProgramResourceIndex(glslProgram.glId(), GL_SHADER_STORAGE_BLOCK, DIRECTIONALLIGHT_STORAGE_BLOCK_NAME);
+        glGetProgramResourceIndex(pbrProgramme->glId(), GL_SHADER_STORAGE_BLOCK, DIRECTIONALLIGHT_STORAGE_BLOCK_NAME);
     assert(lightStorageBlockIndex != GL_INVALID_INDEX);
 
     // Alloc and binding
@@ -120,7 +125,7 @@ int ViewerApplication::run()
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // Linking to shader.
-    glShaderStorageBlockBinding(glslProgram.glId(), lightStorageBlockIndex,
+    glShaderStorageBlockBinding(pbrProgramme->glId(), lightStorageBlockIndex,
         DIRECTIONALLIGHT_STORAGE_BINDING);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DIRECTIONALLIGHT_STORAGE_BINDING,
         directionalLightBufferObject);
@@ -138,12 +143,14 @@ int ViewerApplication::run()
                 );
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    GLuint ambientBlockIndex = glGetUniformBlockIndex(glslProgram.glId(),
+    GLuint ambientBlockIndex = glGetUniformBlockIndex(
+        pbrProgramme->glId(),
                                                        AMBIENTLIGHT_UNIFORM_BUFFER_NAME);
 
     assert(ambientBlockIndex != GL_INVALID_INDEX);
 
-    glUniformBlockBinding(glslProgram.glId(), ambientBlockIndex, AMBIENTLIGHT_BLOCK_BINDING);
+    glUniformBlockBinding(
+        pbrProgramme->glId(), ambientBlockIndex, AMBIENTLIGHT_BLOCK_BINDING);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, AMBIENTLIGHT_BLOCK_BINDING, ambientLightBufferObject);
   }
@@ -162,12 +169,14 @@ int ViewerApplication::run()
                 );
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    GLuint materialBlockIndex = glGetUniformBlockIndex(glslProgram.glId(),
+    GLuint materialBlockIndex = glGetUniformBlockIndex(
+        pbrProgramme->glId(),
                                                        MATERIAL_UNIFORM_BUFFER_NAME);
 
     assert(materialBlockIndex != GL_INVALID_INDEX);
 
-    glUniformBlockBinding(glslProgram.glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
+    glUniformBlockBinding(
+        pbrProgramme->glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, materialBufferObject);
   }
@@ -177,7 +186,7 @@ int ViewerApplication::run()
   objectModels.reserve(m_gltfFilePaths.size());
   for (const auto & path : m_gltfFilePaths)
   {
-    objectModels.emplace_back(path, glslProgram);
+    objectModels.emplace_back(path, pbrProgramme, boundMaterial);
   }
 
   // Physics
@@ -201,14 +210,29 @@ int ViewerApplication::run()
   Simulation simulation;
 
 
+  // Gravity
+  bool isGravityEnabled = true;
   std::shared_ptr<Gravity> gravity;
   {
     const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
     gravity = std::make_shared<Gravity>(
         Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
         * gravityStrength);
+    gravity->setEnabled(isGravityEnabled);
   }
   simulation.addForceField(gravity);
+  // Wind
+  bool isWindEnabled = true;
+  std::shared_ptr<ForceField> wind;
+  {
+    const auto windFunc = []([[maybe_unused]] const auto & obj) -> Vector
+    {
+      return Vector { };
+    };
+    wind = std::make_shared<ForceField>(windFunc);
+    wind->setEnabled(isWindEnabled);
+  }
+  simulation.addForceField(wind);
 
 
   // init random
@@ -273,8 +297,8 @@ int ViewerApplication::run()
   // the objects used in the flag simulation.
   double flagMass = 1.0;
   double flagRadius = 1.0;
-  std::size_t numberFlagColumns = 15;
-  std::size_t numberFlagRows = 15;
+  std::size_t numberFlagColumns = 20;
+  std::size_t numberFlagRows = 20;
   // row-major.
   std::vector<std::vector<std::shared_ptr<Rigidbody>>> flagObjects;
   std::vector<std::vector<Position>> flagPositions;
@@ -339,7 +363,6 @@ int ViewerApplication::run()
     }
   }
 
-  // fixme: for some reason I need to cast it to Force outside of addForce.
   for (auto & spring : flagSprings)
   {
     simulation.addForce(spring);
@@ -394,7 +417,7 @@ int ViewerApplication::run()
   //
   // Setup OpenGL state for rendering
   glEnable(GL_DEPTH_TEST);
-  glslProgram.use();
+  pbrProgramme->use();
 
   // Lambda function to draw the scene
   const auto drawScene = [&](const Camera &camera) {
@@ -654,6 +677,11 @@ int ViewerApplication::run()
 
         if (ImGui::TreeNode("Gravity"))
         {
+          if (ImGui::RadioButton("Enabled", isGravityEnabled))
+          {
+            isGravityEnabled = !isGravityEnabled;
+            gravity->setEnabled(isGravityEnabled);
+          }
           auto strength = static_cast<float>(gravityStrength);
           bool hasGravityChanged = false;
           hasGravityChanged |= ImGui::SliderAngle("Theta", &gravityTheta ,-180.f, 180.f);
@@ -670,6 +698,17 @@ int ViewerApplication::run()
             gravity->setVector(Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
                                * gravityStrength);
           }
+          ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Wind"))
+        {
+          if (ImGui::RadioButton("Enabled", isWindEnabled))
+          {
+            isWindEnabled = !isWindEnabled;
+            wind->setEnabled(isWindEnabled);
+          }
+
           ImGui::TreePop();
         }
 
@@ -792,7 +831,8 @@ ViewerApplication::ViewerApplication(
   printGLVersion();
 }
 ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
-                         const GLProgram & programme)
+                         std::shared_ptr<GLProgram> programme,
+                         std::shared_ptr<tinygltf::Material> boundMaterial)
 {
   loadGltfFile(modelPath, m_model);
   m_textureObjects = createTextureObjects(m_model);
@@ -800,31 +840,27 @@ ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
   m_vertexArrayObjects = createVertexArrayObjects(
       m_model, m_bufferObjects, m_meshIndexToVaoRange);
 
+  m_programme = std::move(programme);
+  m_currentlyBoundMaterial = std::move(boundMaterial);
+
   m_baseTextureLocation =
-      glGetUniformLocation(programme.glId(), BASE_TEX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), BASE_TEX_UNIFORM_NAME);
   m_metallicRoughnessTextureLocation =
-      glGetUniformLocation(programme.glId(), MR_TEX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), MR_TEX_UNIFORM_NAME);
   m_emissionTextureLocation =
-      glGetUniformLocation(programme.glId(), EM_TEX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), EM_TEX_UNIFORM_NAME);
   m_occlusionTextureLocation =
-      glGetUniformLocation(programme.glId(), OC_TEX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), OC_TEX_UNIFORM_NAME);
 
   m_modelViewMatrixLocation =
-      glGetUniformLocation(programme.glId(), MV_MATRIX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), MV_MATRIX_UNIFORM_NAME);
   m_modelViewProjMatrixLocation =
-      glGetUniformLocation(programme.glId(), MVP_MATRIX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), MVP_MATRIX_UNIFORM_NAME);
   m_normalMatrixLocation =
-      glGetUniformLocation(programme.glId(), N_MATRIX_UNIFORM_NAME);
+      glGetUniformLocation(m_programme->glId(), N_MATRIX_UNIFORM_NAME);
 
   assert(m_modelViewMatrixLocation          != -1);
   assert(m_modelViewProjMatrixLocation      != -1);
-  assert(m_normalMatrixLocation             != -1);
-
-  assert(m_baseTextureLocation              != -1);
-  assert(m_metallicRoughnessTextureLocation != -1);
-  assert(m_emissionTextureLocation          != -1);
-  assert(m_occlusionTextureLocation          != -1);
-
 
 }
 
@@ -845,6 +881,11 @@ void ObjectModel::bindMaterial(GLuint materialBufferObject, int materialIdx, boo
   if (materialIdx >= 0) {
     // Material binding
     const tinygltf::Material material = m_model.materials.at(static_cast<std::size_t>(materialIdx));
+    if (*m_currentlyBoundMaterial == material)
+    {
+      // nothing to do!
+      return;
+    }
     const tinygltf::PbrMetallicRoughness & roughness = material.pbrMetallicRoughness;
 
     data.baseColourFactor = glm::make_vec4(roughness.baseColorFactor.data());
@@ -884,6 +925,9 @@ void ObjectModel::bindMaterial(GLuint materialBufferObject, int materialIdx, boo
                     m_textureObjects.at(static_cast<std::size_t>(occlusionTextureIdx)));
       glUniform1i(m_occlusionTextureLocation, 3);
     }
+
+    // update the currently bound material
+    *m_currentlyBoundMaterial = material;
   }
   else
   {
@@ -901,12 +945,19 @@ void ObjectModel::bindMaterial(GLuint materialBufferObject, int materialIdx, boo
 
 }
 
-void ObjectModel::draw(GLuint materialBufferIndex,
+void ObjectModel::draw(GLuint materialBufferObject,
     const glm::mat4 & modelMatrix,
     const glm::mat4 & viewMatrix,
     const glm::mat4 & projMatrix,
     bool useOcclusion) const
 {
+
+  assert(m_normalMatrixLocation             != -1);
+
+  assert(m_baseTextureLocation              != -1);
+  assert(m_metallicRoughnessTextureLocation != -1);
+  assert(m_emissionTextureLocation          != -1);
+  assert(m_occlusionTextureLocation          != -1);
 
   // The recursive function that should draw a node
   // We use a std::function because a simple lambda cannot be recursive
@@ -949,7 +1000,8 @@ void ObjectModel::draw(GLuint materialBufferIndex,
             const GLuint vao = m_vertexArrayObjects.at(
                 static_cast<std::size_t>(vaoRange.begin) + primitiveIdx);
 
-            bindMaterial(materialBufferIndex, primitive.material, useOcclusion);
+            bindMaterial(
+                materialBufferObject, primitive.material, useOcclusion);
 
             glBindVertexArray(vao);
 
