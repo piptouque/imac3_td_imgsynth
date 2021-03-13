@@ -73,8 +73,7 @@ set(
 set(
     THIRD_PARTY_SRC_FILES
     ${IMGUI_SRC_FILES}
-    third-party/${GLAD_DIR}/src/glad.c
-        third-party/cantina_common/include/cant/maths/algo.hpp)
+    third-party/${GLAD_DIR}/src/glad.c)
 
 set(
     THIRD_PARTY_INCLUDE_FILES
@@ -86,7 +85,6 @@ set(
     third-party/${IMGUI_DIR}/examples/
     third-party/${TINYGLTF_DIR}/include
     third-party/${ARGS_DIR}
-    ${CANTINA_COMMON_INCLUDE_DIRS}
     lib/include
 )
 
@@ -94,6 +92,7 @@ set(
     LIBRARIES
     ${OPENGL_LIBRARIES}
     glfw
+    c3ga
 )
 
 if (GLTF_VIEWER_USE_BOOST_FILESYSTEM)
@@ -148,7 +147,8 @@ target_include_directories(
         SYSTEM PUBLIC ${THIRD_PARTY_INCLUDE_FILES}
 )
 
-target_link_libraries(${APP} third-party)
+target_link_libraries(${APP} PUBLIC third-party)
+target_link_libraries(${APP} PRIVATE cantina_common)
 
 if(GLTF_VIEWER_USE_BOOST_FILESYSTEM)
     target_include_directories (

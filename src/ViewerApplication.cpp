@@ -233,6 +233,9 @@ int ViewerApplication::run()
     wind->setEnabled(isWindEnabled);
   }
   simulation.addForceField(wind);
+  // Collisions
+  bool areCollisionsEnabled = true;
+  simulation.setCollisionsEnabled(areCollisionsEnabled);
 
 
   // init random
@@ -297,12 +300,12 @@ int ViewerApplication::run()
   // the objects used in the flag simulation.
   double flagMass = 1.0;
   double flagRadius = 1.0;
-  std::size_t numberFlagColumns = 20;
-  std::size_t numberFlagRows = 20;
+  std::size_t numberFlagColumns = 5;
+  std::size_t numberFlagRows = 5;
   // row-major.
   std::vector<std::vector<std::shared_ptr<Rigidbody>>> flagObjects;
   std::vector<std::vector<Position>> flagPositions;
-  const Position flagPositionOffset = { 0, 5, 0 };
+  const Position flagPositionOffset = { 0.0, 5.0, 0.0 };
   const double flagPositionStep = 1.5;
   const std::size_t flagObjectModelIdx = 0;
   // sphere shape.
@@ -322,7 +325,9 @@ int ViewerApplication::run()
     flagPositions.back().reserve(numberFlagColumns);
     for (std::size_t x = 0; x < numberFlagColumns; ++x)
     {
-      flagPositions.back().push_back(flagPositionOffset + flagPositionStep * Position { x, y, 0 });
+      flagPositions.back().push_back(flagPositionOffset
+                                     + flagPositionStep
+                                           * Position { static_cast<double>(x), static_cast<double>(y), 0.0 });
       // note: the first column (hoist) should not move -> null mass.
       auto flagObject = std::make_unique<Dynamic>(
           x == 0 ? 0.0 : flagMass,
@@ -716,6 +721,16 @@ int ViewerApplication::run()
             wind->setEnabled(isWindEnabled);
           }
 
+          ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Collisions"))
+        {
+          if (ImGui::RadioButton("Enabled", areCollisionsEnabled))
+          {
+            areCollisionsEnabled = !areCollisionsEnabled;
+            simulation.setCollisionsEnabled(areCollisionsEnabled);
+          }
           ImGui::TreePop();
         }
 

@@ -4,5 +4,6 @@
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/modules" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/third-party/cantina_common" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/third-party/cantina_common/modules" vcs="Git" />
   </component>
 </project>
