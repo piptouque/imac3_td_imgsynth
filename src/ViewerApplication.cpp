@@ -19,6 +19,7 @@
 #include <cant/physics/UniformForceField.hpp>
 #include <cant/physics/CustomForceField.hpp>
 #include <cant/physics/PhysicsSimulation.hpp>
+#include <cant/time/InternalClock.hpp>
 
 using Simulation = cant::physics::PhysicsSimulation<3, double>;
 using Dynamic = Simulation::Dynamic;
@@ -35,6 +36,8 @@ using ForceField = cant::physics::CustomForceField<3, double>;
 
 using RandomGenerator = std::default_random_engine;
 using UniformDoubleDist = std::uniform_real_distribution<double>;
+
+using Clock = cant::time::InternalClock;
 
 // TD
 
@@ -78,7 +81,7 @@ namespace {
     return bufferObjects.at(bufferIdx);
   }
 
-  std::size_t getByteOffset(const tinygltf::Accessor & accessor, const tinygltf::BufferView bufferView) {
+  std::size_t getByteOffset(const tinygltf::Accessor & accessor, const tinygltf::BufferView & bufferView) {
     return accessor.byteOffset + bufferView.byteOffset;
   }
 
@@ -190,12 +193,17 @@ int ViewerApplication::run()
   }
 
   // Physics
+  Simulation simulation;
   bool enablePhysicsUpdate = false;
   double simulationStep = 0.05;
   // a multiplier to speed the simulation up or slow it down.
   double simulationSpeed = 1.0;
 
-  float gravityTheta = glm::pi<float>();
+  // We'll get a timer.
+  std::shared_ptr<Clock> clock = Clock::make(cant::time::SystemExternalClock::make());
+
+  // Gravity
+  auto gravityTheta = glm::pi<float>();
   float gravityPhi = 0.f;
   const auto computeDirFromEuler = [](float theta, float phi) -> glm::vec3
   {
@@ -204,13 +212,7 @@ int ViewerApplication::run()
                      glm::cos(theta),
                      sinTheta * glm::sin(phi));
   };
-
-  double gravityStrength = 9.81;
-
-  Simulation simulation;
-
-
-  // Gravity
+  float gravityStrength = 9.81f;
   bool isGravityEnabled = true;
   std::shared_ptr<Gravity> gravity;
   {
@@ -223,11 +225,30 @@ int ViewerApplication::run()
   simulation.addForceField(gravity);
   // Wind
   bool isWindEnabled = true;
+  auto windAmpTheta = glm::half_pi<float>();
+  float windAmpPhi = 0.f;
+  float windAmpStrength = 1.0;
+  float windFreqTheta = 0.f;
+  float windFreqPhi = 0.f;
+  float windFreqStrength = 1.0;
+  Vector windAmplitude;
+  Vector windFrequency;
+  {
+      const auto windAmplitudeGlm = computeDirFromEuler(windAmpTheta, windAmpPhi);
+      const auto windFrequencyGlm = computeDirFromEuler(windFreqTheta, windFreqPhi);
+      windAmplitude = { windAmplitudeGlm.x, windAmplitudeGlm.y, windAmplitudeGlm.z };
+      windFrequency = { windFrequencyGlm.x, windFrequencyGlm.y, windFrequencyGlm.z };
+  }
   std::shared_ptr<ForceField> wind;
   {
-    const auto windFunc = []([[maybe_unused]] const auto & obj) -> Vector
+    const auto windFunc = [clock, &windAmplitude, &windFrequency]
+        (const std::shared_ptr<ForceField::Object> & obj) -> Vector
     {
-      return Vector { };
+      [[maybe_unused]] const Position & pos = obj->getPosition();
+      const double t = clock->getCurrentTime();
+      const Vector windPhase = windFrequency.map(
+          [t](double val) { return std::cos(val * t); });
+      return windAmplitude * windPhase;
     };
     wind = std::make_shared<ForceField>(windFunc);
     wind->setEnabled(isWindEnabled);
@@ -694,21 +715,16 @@ int ViewerApplication::run()
             isGravityEnabled = !isGravityEnabled;
             gravity->setEnabled(isGravityEnabled);
           }
-          auto strength = static_cast<float>(gravityStrength);
           bool hasGravityChanged = false;
           hasGravityChanged |= ImGui::SliderAngle("Theta", &gravityTheta ,-180.f, 180.f);
           hasGravityChanged |= ImGui::SliderAngle("Phi",   &gravityPhi,-180.f, 180.f);
 
-          hasGravityChanged |= ImGui::SliderFloat("Strength", &strength, 0.f, 20.f);
+          hasGravityChanged |= ImGui::SliderFloat("Strength", &gravityStrength, 0.f, 20.f);
 
           if (hasGravityChanged) {
-            gravityStrength = strength;
-            const float sinTheta = glm::sin(gravityTheta);
-            const auto gravityDirGlm = glm::vec3(sinTheta * glm::cos(gravityPhi),
-                                                 glm::cos(gravityTheta),
-                                                 sinTheta * glm::sin(gravityPhi));
-            gravity->setVector(Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
-                               * gravityStrength);
+            const glm::vec3 gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
+            gravity->setVector( gravityStrength
+                               * Vector { gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z });
           }
           ImGui::TreePop();
         }
@@ -720,6 +736,33 @@ int ViewerApplication::run()
             isWindEnabled = !isWindEnabled;
             wind->setEnabled(isWindEnabled);
           }
+          {
+            bool hasWindAmpChanged = false;
+            hasWindAmpChanged |= ImGui::SliderAngle("Amplitude Theta", &windAmpTheta ,-180.f, 180.f);
+            hasWindAmpChanged |= ImGui::SliderAngle("Amplitude Phi",   &windAmpPhi,-180.f, 180.f);
+
+            hasWindAmpChanged |= ImGui::SliderFloat("Amplitude", &windAmpStrength, 0.f, 20.f);
+
+            if (hasWindAmpChanged) {
+              const glm::vec3 windAmplitudeGlm = computeDirFromEuler(windAmpTheta, windAmpPhi);
+              windAmplitude = windAmpStrength
+                              * Vector { windAmplitudeGlm.x, windAmplitudeGlm.y, windAmplitudeGlm.z };
+            }
+          }
+          {
+            bool hasWindFreqChanged = false;
+            hasWindFreqChanged |= ImGui::SliderAngle("Frequency Theta", &windFreqTheta ,-180.f, 180.f);
+            hasWindFreqChanged |= ImGui::SliderAngle("Frequency Phi",   &windFreqPhi,-180.f, 180.f);
+
+            hasWindFreqChanged |= ImGui::SliderFloat("Frequency", &windFreqStrength, 0.f, 100.f);
+
+            if (hasWindFreqChanged) {
+              const glm::vec3 windFrequencyGlm = computeDirFromEuler(windFreqTheta, windFreqPhi);
+              windFrequency = windFreqStrength
+                              * Vector { windFrequencyGlm.x, windFrequencyGlm.y, windFrequencyGlm.z };
+            }
+          }
+
 
           ImGui::TreePop();
         }
