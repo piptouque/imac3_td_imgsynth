@@ -298,7 +298,7 @@ int ViewerApplication::run()
   simulation.addDynamicObject(groundObject);
 
   // the physical representation of the objects
-  double ballMass = 1.0; // mass
+  float ballMass = 1.0; // mass
   std::size_t numberBallObjects = 1;
   std::vector<std::shared_ptr<Dynamic>> ballObjects;
   std::vector<std::size_t> ballObjectToModelIndices;
@@ -319,8 +319,8 @@ int ViewerApplication::run()
   }
 
   // the objects used in the flag simulation.
-  double flagMass = 1.0;
-  double flagRadius = 1.0;
+  float flagMass = 1.0;
+  float flagRadius = 1.0;
   std::size_t numberFlagColumns = 5;
   std::size_t numberFlagRows = 5;
   // row-major.
@@ -363,19 +363,34 @@ int ViewerApplication::run()
   // flat, since links between flag points
   // are a bit more complicated than a grid.
   std::vector<std::shared_ptr<HookSpring>> flagSprings;
+  std::vector<std::pair<std::shared_ptr<HookSpring>, std::size_t>> hoistSprings;
   // All 2D 8-adj plus distant 4-adj. -> 12 links max per objects.
   // does not take link symmetry into account,
   // but I guess it's all right to reserve way more space than necessary.
   flagSprings.reserve(12 * numberFlagRows * numberFlagRows);
-  double k = 20.0;
-  double l0 = 0.5;
+  hoistSprings.reserve(12 * numberFlagRows);
+  float k = 20.0;
+  float l0 = 2.0;
+  double hoistPullFactor;
+  {
+    const Vector pullVec = gravity->getVector() + windAmplitude;
+    // get projection onto up dir.
+    hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
+  }
+  const auto computeHoistStiffness = [](double stiffness, std::size_t y, std::size_t hoistLength, double pullFactor) -> double
+  {
+    const double heightRatio = static_cast<double>(y) / static_cast<double>(hoistLength);
+    return stiffness
+           * (1 + std::abs(pullFactor)
+                 * (pullFactor >= 0.0 ? 1 - heightRatio : heightRatio));
+  };
   std::vector<std::pair<int, int>> const neighbourOffsets =
       {
           { 1, 0 }, { 0, 1 }, { 1, 1 }, { -1, 1}, { 2, 0 }, { 0, 2}
       };
   for (std::size_t y = 0; y < flagObjects.size(); ++y)
   {
-    for (std::size_t x = 0; x < flagObjects.front().size(); ++x)
+    for (std::size_t x = 1; x < flagObjects.front().size(); ++x)
     {
       // figure out the neighbours.
       for (const auto & offset : neighbourOffsets)
@@ -387,14 +402,33 @@ int ViewerApplication::run()
             && yNeighbour >= 0 && static_cast<std::size_t>(yNeighbour) < flagObjects.size())
         {
           // link with neighbour
+          const bool isLinkingHoist = x == 0 || xNeighbour == 0;
+          const double stiffness = isLinkingHoist
+                                 ? computeHoistStiffness(k, y, flagObjects.size(), hoistPullFactor)
+                                 : k;
           auto spring = std::make_shared<HookSpring>(
-              k, l0, p,
+              stiffness, l0, p,
               flagObjects.at(static_cast<std::size_t>(yNeighbour)).at(static_cast<std::size_t>(xNeighbour)));
-          flagSprings.push_back(std::move(spring));
+          if (isLinkingHoist)
+          {
+            // add to hoist list
+            hoistSprings.emplace_back(spring, y);
+          }
+          flagSprings.push_back(spring);
         }
       }
     }
   }
+
+  const auto setHoistStiffness = [&](double stiffness, double pullFactor)
+  {
+    for (auto & spring : hoistSprings)
+    {
+      stiffness = computeHoistStiffness(stiffness, spring.second, flagSprings.size(), pullFactor);
+      spring.first->setStiffness(stiffness);
+    }
+  };
+
 
   for (auto & spring : flagSprings)
   {
@@ -725,6 +759,10 @@ int ViewerApplication::run()
             const glm::vec3 gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
             gravity->setVector( gravityStrength
                                * Vector { gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z });
+            const Vector pullVec = gravity->getVector() + windAmplitude;
+            // get projection onto up dir.
+            hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
+            setHoistStiffness(k, hoistPullFactor);
           }
           ImGui::TreePop();
         }
@@ -747,6 +785,10 @@ int ViewerApplication::run()
               const glm::vec3 windAmplitudeGlm = computeDirFromEuler(windAmpTheta, windAmpPhi);
               windAmplitude = windAmpStrength
                               * Vector { windAmplitudeGlm.x, windAmplitudeGlm.y, windAmplitudeGlm.z };
+              const Vector pullVec = gravity->getVector() + windAmplitude;
+              // get projection onto up dir.
+              hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
+              setHoistStiffness(k, hoistPullFactor);
             }
           }
           {
@@ -779,13 +821,11 @@ int ViewerApplication::run()
 
         if (ImGui::TreeNode("Ball"))
         {
-          auto mass = static_cast<float>(ballMass);
           bool hasBallChanged = false;
 
-          hasBallChanged |= ImGui::SliderFloat("Mass", &mass, 0.f, 100.f);
+          hasBallChanged |= ImGui::SliderFloat("Mass", &ballMass, 0.f, 100.f);
 
           if (hasBallChanged) {
-            ballMass = mass;
             for (auto & ball : ballObjects)
             {
               ball->setMass(ballMass);
@@ -796,13 +836,11 @@ int ViewerApplication::run()
 
         if (ImGui::TreeNode("Flag"))
         {
-          auto mass = static_cast<float>(flagMass);
           bool hasFlagChanged = false;
 
-          hasFlagChanged |= ImGui::SliderFloat("Mass", &mass, 0.f, 100.f);
+          hasFlagChanged |= ImGui::SliderFloat("Mass", &flagMass, 0.f, 100.f);
           if (hasFlagChanged)
           {
-            flagMass = mass;
             // do *not* set the mass of the hoist, these should stay static!
             for (std::size_t y = 0; y < flagObjects.size(); ++y)
             {
@@ -813,20 +851,17 @@ int ViewerApplication::run()
             }
           }
 
-          auto stiffness = static_cast<float>(k);
-          auto restLength = static_cast<float>(l0);
           bool haveSpringsChanged = false;
 
-          haveSpringsChanged |= ImGui::SliderFloat("k", &stiffness, 0.f, 100.f);
-          haveSpringsChanged |= ImGui::SliderFloat("l0", &restLength, 0.f, 20.f);
+          haveSpringsChanged |= ImGui::SliderFloat("k", &k, 0.f, 100.f);
+          haveSpringsChanged |= ImGui::SliderFloat("l0", &l0, 0.f, 20.f);
           if (haveSpringsChanged) {
-            k = stiffness;
-            l0 = restLength;
             for (auto & spring : flagSprings)
             {
               spring->setStiffness(k);
               spring->setRestLength(l0);
             }
+            setHoistStiffness(k, hoistPullFactor);
           }
           ImGui::TreePop();
         }
