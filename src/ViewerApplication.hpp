@@ -31,9 +31,6 @@ private:
   std::string m_vertexShader = "forward.vs.glsl";
   std::string m_fragmentShader = "pbr_directional_light.fs.glsl";
 
-  std::string m_wireframeVertexShader = "wireframe.vs.glsl";
-  std::string m_wireframeFragmentShader = "wireframe.fs.glsl";
-
   bool m_hasUserCamera = false;
   Camera m_userCamera;
 
