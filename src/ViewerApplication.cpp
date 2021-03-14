@@ -2,8 +2,6 @@
 
 #include <iostream>
 #include <numeric>
-#include <random>
-#include <exception>
 #include <future> // todo: async.
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -33,9 +31,6 @@ using Vector = Dynamic::Vector;
 using HookSpring = cant::physics::HookeSpringLink<3, double>;
 using Gravity = cant::physics::UniformForceField<3, double>;
 using ForceField = cant::physics::CustomForceField<3, double>;
-
-using RandomGenerator = std::default_random_engine;
-using UniformDoubleDist = std::uniform_real_distribution<double>;
 
 using Clock = cant::time::InternalClock;
 
@@ -96,18 +91,13 @@ namespace {
 }
 
 
-
 int ViewerApplication::run()
 {
   // Loader shaders
   auto pbrProgramme = std::make_shared<GLProgram>(
       compileProgram({m_ShadersRootPath / m_vertexShader,
           m_ShadersRootPath / m_fragmentShader}));
-  auto wireframeProgramme = std::make_shared<GLProgram>(
-      compileProgram({m_ShadersRootPath / m_wireframeVertexShader,
-                      m_ShadersRootPath / m_wireframeFragmentShader}));
   auto boundMaterial = std::make_shared<tinygltf::Material>();
-
 
   GLuint directionalLightBufferObject;
   // Directional SSBO stuff
@@ -226,7 +216,7 @@ int ViewerApplication::run()
   // Wind
   bool isWindEnabled = true;
   auto windAmpTheta = glm::half_pi<float>();
-  float windAmpPhi = 0.f;
+  float windAmpPhi = -glm::half_pi<float>();
   float windAmpStrength = 1.0;
   float windFreqTheta = 0.f;
   float windFreqPhi = 0.f;
@@ -255,68 +245,8 @@ int ViewerApplication::run()
   }
   simulation.addForceField(wind);
   // Collisions
-  bool areCollisionsEnabled = true;
+  bool areCollisionsEnabled = false;
   simulation.setCollisionsEnabled(areCollisionsEnabled);
-
-
-  // init random
-  unsigned int seed;
-  try
-  {
-    std::random_device rd;
-    seed = rd();
-  }
-  catch (std::exception & e)
-  {
-    // random device is not available.
-    seed = static_cast<unsigned int>(std::chrono::system_clock::now().time_since_epoch().count());
-  }
-  RandomGenerator rng(seed);
-  UniformDoubleDist dist;
-
-  const auto getRandomSpherePos = [&rng, &dist](std::size_t number, double min, double max)
-      -> std::vector<Position>
-  {
-    std::vector<Position> positions;
-    positions.reserve(number);
-    // auto par = dist.param();
-    auto par = UniformDoubleDist ::param_type(min, max);
-    dist.param(par);
-    auto random = std::bind(dist, rng);
-    for (std::size_t i = 0; i < number; ++i)
-    {
-      positions.emplace_back(random(), random(), random());
-    }
-    return positions;
-  };
-
-  // ground is a static object -> mass to 0.
-  std::shared_ptr<Dynamic> groundObject = std::make_shared<Dynamic>(
-      0.0,
-      3.0 * Position { -1.0, -1.0, -1.0 });
-  const std::size_t groundModelIdx = 1;
-  simulation.addDynamicObject(groundObject);
-
-  // the physical representation of the objects
-  float ballMass = 1.0; // mass
-  std::size_t numberBallObjects = 1;
-  std::vector<std::shared_ptr<Dynamic>> ballObjects;
-  std::vector<std::size_t> ballObjectToModelIndices;
-  const std::size_t ballObjectModelIdx = 0;
-  ballObjects.reserve(numberBallObjects);
-  {
-    const std::vector<Position> ballPositions = getRandomSpherePos(
-        numberBallObjects,
-        - static_cast<double>(numberBallObjects) / 2.0,
-        static_cast<double>(numberBallObjects) / 2.0
-                                                              );
-    for (std::size_t i = 0; i < numberBallObjects; ++i)
-    {
-      ballObjects.push_back(std::make_shared<Dynamic>(ballMass, ballPositions.at(i)));
-      ballObjectToModelIndices.push_back(ballObjectModelIdx);
-      simulation.addDynamicObject(ballObjects.back());
-    }
-  }
 
   // the objects used in the flag simulation.
   float flagMass = 1.0;
@@ -326,8 +256,12 @@ int ViewerApplication::run()
   // row-major.
   std::vector<std::vector<std::shared_ptr<Rigidbody>>> flagObjects;
   std::vector<std::vector<Position>> flagPositions;
-  const Position flagPositionOffset = { 0.0, 5.0, 0.0 };
   const double flagPositionStep = 1.5;
+  const Position flagPositionOffset =
+      flagPositionStep * Vector {
+    - static_cast<double>(numberFlagColumns) * 0.5,
+        - static_cast<double>(numberFlagRows) * 0.5,
+          0.0 };
   const std::size_t flagObjectModelIdx = 0;
   // sphere shape.
   auto flagShape = std::make_shared<Shape>(
@@ -438,8 +372,7 @@ int ViewerApplication::run()
   // Build projection matrix
   glm::vec3 bboxMin, bboxMax;
   // todo: compute scene bounds from max of all model bounds.??
-  // nah, ground model should be enough.
-  computeSceneBounds(objectModels.at(groundModelIdx).getModel(), bboxMin, bboxMax);
+  computeSceneBounds(objectModels.at(flagObjectModelIdx).getModel(), bboxMin, bboxMax);
 
   const glm::vec3 diag = bboxMax - bboxMin;
 
@@ -520,46 +453,18 @@ int ViewerApplication::run()
     }
 
     // Flag objects
-    for (const auto & flagRow : flagObjects)
-    {
-      for (const auto & obj : flagRow)
-      {
+    for (const auto & flagRow : flagObjects) {
+      for (const auto &obj : flagRow) {
         const auto pos = obj->getPosition();
-        glm::mat4 const rootModelMatrix = glm::translate(
-            glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
-                                                        );
-        objectModels.at(flagObjectModelIdx).draw(
-            materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
+        glm::mat4 const rootModelMatrix =
+            glm::translate(glm::identity<glm::mat4>(),
+                glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>()));
+        objectModels.at(flagObjectModelIdx)
+            .draw(materialBufferObject, rootModelMatrix, viewMatrix, projMatrix,
+                useOcclusion);
       }
     }
-
-
-    // Ball objects
-    std::size_t ballObjectIdx = 0;
-    for (const auto & obj : ballObjects)
-    {
-      const auto pos = obj->getPosition();
-      glm::mat4 const rootModelMatrix = glm::translate(
-          glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
-                                                      );
-      objectModels.at(ballObjectToModelIndices.at(ballObjectIdx)).draw(
-          materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
-      ++ballObjectIdx;
-    }
-
-    // ground object
-    {
-      const auto pos = groundObject->getPosition();
-      glm::mat4 const rootModelMatrix = glm::translate(
-          glm::identity<glm::mat4>(), glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>())
-                                                      );
-      objectModels.at(groundModelIdx).draw(
-          materialBufferObject, rootModelMatrix, viewMatrix, projMatrix, useOcclusion);
-
-    }
-
   };
-
   if (!m_OutputPath.empty())
   {
     const auto width = static_cast<std::size_t>(m_nWindowWidth);
@@ -723,15 +628,6 @@ int ViewerApplication::run()
           simulationSpeed = speed;
         }
         if (ImGui::RadioButton("Reset Objects", false)) {
-            const std::vector<Position> positions = getRandomSpherePos(
-              numberBallObjects,
-                - static_cast<double>(numberBallObjects) / 2.0,
-              static_cast<double>(numberBallObjects) / 2.0);
-            for (std::size_t i = 0; i < numberBallObjects; ++i)
-            {
-              ballObjects.at(i)->setVelocity(Vector { });
-              ballObjects.at(i)->setPosition(positions.at(i));
-            }
             for (std::size_t y = 0; y < flagObjects.size(); ++y)
             {
               for (std::size_t x = 0; x < flagObjects.front().size(); ++x)
@@ -815,21 +711,6 @@ int ViewerApplication::run()
           {
             areCollisionsEnabled = !areCollisionsEnabled;
             simulation.setCollisionsEnabled(areCollisionsEnabled);
-          }
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Ball"))
-        {
-          bool hasBallChanged = false;
-
-          hasBallChanged |= ImGui::SliderFloat("Mass", &ballMass, 0.f, 100.f);
-
-          if (hasBallChanged) {
-            for (auto & ball : ballObjects)
-            {
-              ball->setMass(ballMass);
-            }
           }
           ImGui::TreePop();
         }
