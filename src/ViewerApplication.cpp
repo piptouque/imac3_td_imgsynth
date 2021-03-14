@@ -13,27 +13,6 @@
 
 #include <stb_image_write.h>
 
-#include <cant/physics/HookeSpringLink.hpp>
-#include <cant/physics/UniformForceField.hpp>
-#include <cant/physics/CustomForceField.hpp>
-#include <cant/physics/PhysicsSimulation.hpp>
-#include <cant/time/InternalClock.hpp>
-
-using Simulation = cant::physics::PhysicsSimulation<3, double>;
-using Dynamic = Simulation::Dynamic;
-using Rigidbody = Simulation::Rigid;
-using Shape = Rigidbody::Shape;
-using Force = Simulation::Force;
-
-using Position = Dynamic::Position;
-using Vector = Dynamic::Vector;
-
-using HookSpring = cant::physics::HookeSpringLink<3, double>;
-using Gravity = cant::physics::UniformForceField<3, double>;
-using ForceField = cant::physics::CustomForceField<3, double>;
-
-using Clock = cant::time::InternalClock;
-
 // TD
 
 static constexpr GLuint VERTEX_ATTRIB_POSITION_IDX  = 0;
@@ -181,198 +160,12 @@ int ViewerApplication::run()
   {
     objectModels.emplace_back(path, pbrProgramme, boundMaterial);
   }
-
-  // Physics
-  Simulation simulation;
-  bool enablePhysicsUpdate = false;
-  double simulationStep = 0.05;
-  // a multiplier to speed the simulation up or slow it down.
-  double simulationSpeed = 1.0;
-
-  // We'll get a timer.
-  std::shared_ptr<Clock> clock = Clock::make(cant::time::SystemExternalClock::make());
-
-  // Gravity
-  auto gravityTheta = glm::pi<float>();
-  float gravityPhi = 0.f;
-  const auto computeDirFromEuler = [](float theta, float phi) -> glm::vec3
-  {
-    const float sinTheta = glm::sin(theta);
-    return glm::vec3(sinTheta * glm::cos(phi),
-                     glm::cos(theta),
-                     sinTheta * glm::sin(phi));
-  };
-  float gravityStrength = 9.81f;
-  bool isGravityEnabled = true;
-  std::shared_ptr<Gravity> gravity;
-  {
-    const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
-    gravity = std::make_shared<Gravity>(
-        Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
-        * gravityStrength);
-    gravity->setEnabled(isGravityEnabled);
-  }
-  simulation.addForceField(gravity);
-  // Wind
-  bool isWindEnabled = true;
-  auto windAmpTheta = glm::half_pi<float>();
-  float windAmpPhi = -glm::half_pi<float>();
-  float windAmpStrength = 1.0;
-  float windFreqTheta = 0.f;
-  float windFreqPhi = 0.f;
-  float windFreqStrength = 1.0;
-  Vector windAmplitude;
-  Vector windFrequency;
-  {
-      const auto windAmplitudeGlm = computeDirFromEuler(windAmpTheta, windAmpPhi);
-      const auto windFrequencyGlm = computeDirFromEuler(windFreqTheta, windFreqPhi);
-      windAmplitude = { windAmplitudeGlm.x, windAmplitudeGlm.y, windAmplitudeGlm.z };
-      windFrequency = { windFrequencyGlm.x, windFrequencyGlm.y, windFrequencyGlm.z };
-  }
-  std::shared_ptr<ForceField> wind;
-  {
-    const auto windFunc = [clock, &windAmplitude, &windFrequency]
-        (const std::shared_ptr<ForceField::Object> & obj) -> Vector
-    {
-      [[maybe_unused]] const Position & pos = obj->getPosition();
-      const double t = clock->getCurrentTime();
-      const Vector windPhase = windFrequency.map(
-          [t](double val) { return std::cos(val * t); });
-      return windAmplitude * windPhase;
-    };
-    wind = std::make_shared<ForceField>(windFunc);
-    wind->setEnabled(isWindEnabled);
-  }
-  simulation.addForceField(wind);
-  // Collisions
-  bool areCollisionsEnabled = false;
-  simulation.setCollisionsEnabled(areCollisionsEnabled);
-
-  // the objects used in the flag simulation.
-  float flagMass = 1.0;
-  float flagRadius = 1.0;
-  std::size_t numberFlagColumns = 5;
-  std::size_t numberFlagRows = 5;
-  // row-major.
-  std::vector<std::vector<std::shared_ptr<Rigidbody>>> flagObjects;
-  std::vector<std::vector<Position>> flagPositions;
-  const double flagPositionStep = 1.5;
-  const Position flagPositionOffset =
-      flagPositionStep * Vector {
-    - static_cast<double>(numberFlagColumns) * 0.5,
-        - static_cast<double>(numberFlagRows) * 0.5,
-          0.0 };
-  const std::size_t flagObjectModelIdx = 0;
-  // sphere shape.
-  auto flagShape = std::make_shared<Shape>(
-      [](const Position & p1, const Position & p2)
-      {
-        // L-2 norm -> sphere.
-        return p1.getDistance<2>(p2);
-      },
-      flagRadius);
-  flagPositions.reserve(numberFlagRows);
-  for (std::size_t y = 0; y < numberFlagRows; ++y)
-  {
-    flagObjects.emplace_back();
-    flagObjects.back().reserve(numberFlagColumns);
-    flagPositions.emplace_back();
-    flagPositions.back().reserve(numberFlagColumns);
-    for (std::size_t x = 0; x < numberFlagColumns; ++x)
-    {
-      flagPositions.back().push_back(flagPositionOffset
-                                     + flagPositionStep
-                                           * Position { static_cast<double>(x), static_cast<double>(y), 0.0 });
-      // note: the first column (hoist) should not move -> null mass.
-      auto flagObject = std::make_unique<Dynamic>(
-          x == 0 ? 0.0 : flagMass,
-          flagPositions.back().back());
-      flagObjects.back().push_back(
-          std::make_shared<Rigidbody>(std::move(flagObject), flagShape));
-      simulation.addRigidObject(flagObjects.back().back());
-    }
-
-  }
-  // -- forces
-  // flat, since links between flag points
-  // are a bit more complicated than a grid.
-  std::vector<std::shared_ptr<HookSpring>> flagSprings;
-  std::vector<std::pair<std::shared_ptr<HookSpring>, std::size_t>> hoistSprings;
-  // All 2D 8-adj plus distant 4-adj. -> 12 links max per objects.
-  // does not take link symmetry into account,
-  // but I guess it's all right to reserve way more space than necessary.
-  flagSprings.reserve(12 * numberFlagRows * numberFlagRows);
-  hoistSprings.reserve(12 * numberFlagRows);
-  float k = 20.0;
-  float l0 = 2.0;
-  double hoistPullFactor;
-  {
-    const Vector pullVec = gravity->getVector() + windAmplitude;
-    // get projection onto up dir.
-    hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
-  }
-  const auto computeHoistStiffness = [](double stiffness, std::size_t y, std::size_t hoistLength, double pullFactor) -> double
-  {
-    const double heightRatio = static_cast<double>(y) / static_cast<double>(hoistLength);
-    return stiffness
-           * (1 + std::abs(pullFactor)
-                 * (pullFactor >= 0.0 ? 1 - heightRatio : heightRatio));
-  };
-  std::vector<std::pair<int, int>> const neighbourOffsets =
-      {
-          { 1, 0 }, { 0, 1 }, { 1, 1 }, { -1, 1}, { 2, 0 }, { 0, 2}
-      };
-  for (std::size_t y = 0; y < flagObjects.size(); ++y)
-  {
-    for (std::size_t x = 1; x < flagObjects.front().size(); ++x)
-    {
-      // figure out the neighbours.
-      for (const auto & offset : neighbourOffsets)
-      {
-        auto const & p = flagObjects.at(y).at(x);
-        int const yNeighbour = static_cast<int>(y) + offset.second;
-        int const xNeighbour = static_cast<int>(x) + offset.first;
-        if (xNeighbour >= 0 && static_cast<std::size_t>(xNeighbour) < flagObjects.front().size()
-            && yNeighbour >= 0 && static_cast<std::size_t>(yNeighbour) < flagObjects.size())
-        {
-          // link with neighbour
-          const bool isLinkingHoist = x == 0 || xNeighbour == 0;
-          const double stiffness = isLinkingHoist
-                                 ? computeHoistStiffness(k, y, flagObjects.size(), hoistPullFactor)
-                                 : k;
-          auto spring = std::make_shared<HookSpring>(
-              stiffness, l0, p,
-              flagObjects.at(static_cast<std::size_t>(yNeighbour)).at(static_cast<std::size_t>(xNeighbour)));
-          if (isLinkingHoist)
-          {
-            // add to hoist list
-            hoistSprings.emplace_back(spring, y);
-          }
-          flagSprings.push_back(spring);
-        }
-      }
-    }
-  }
-
-  const auto setHoistStiffness = [&](double stiffness, double pullFactor)
-  {
-    for (auto & spring : hoistSprings)
-    {
-      stiffness = computeHoistStiffness(stiffness, spring.second, flagSprings.size(), pullFactor);
-      spring.first->setStiffness(stiffness);
-    }
-  };
-
-
-  for (auto & spring : flagSprings)
-  {
-    simulation.addForce(spring);
-  }
+  std::size_t currentObjectModelIdx = 0;
 
   // Build projection matrix
   glm::vec3 bboxMin, bboxMax;
   // todo: compute scene bounds from max of all model bounds.??
-  computeSceneBounds(objectModels.at(flagObjectModelIdx).getModel(), bboxMin, bboxMax);
+  computeSceneBounds(objectModels.at(currentObjectModelIdx).getModel(), bboxMin, bboxMax);
 
   const glm::vec3 diag = bboxMax - bboxMin;
 
@@ -453,17 +246,10 @@ int ViewerApplication::run()
     }
 
     // Flag objects
-    for (const auto & flagRow : flagObjects) {
-      for (const auto &obj : flagRow) {
-        const auto pos = obj->getPosition();
-        glm::mat4 const rootModelMatrix =
-            glm::translate(glm::identity<glm::mat4>(),
-                glm::vec3(pos.get<0>(), pos.get<1>(), pos.get<2>()));
-        objectModels.at(flagObjectModelIdx)
-            .draw(materialBufferObject, rootModelMatrix, viewMatrix, projMatrix,
-                useOcclusion);
-      }
-    }
+    glm::mat4 const rootModelMatrix = glm::identity<glm::mat4>();
+      objectModels.at(currentObjectModelIdx)
+          .draw(materialBufferObject, rootModelMatrix, viewMatrix, projMatrix,
+              useOcclusion);
   };
   if (!m_OutputPath.empty())
   {
@@ -495,24 +281,10 @@ int ViewerApplication::run()
     glClearColor(clearColour.r, clearColour.g, clearColour.b, 1.f);
   }
 
-  double accH = 0.0;
-  double time = glfwGetTime();
   // Loop until the user closes the window
   for (auto iterationCount = 0u; !m_GLFWHandle.shouldClose();
        ++iterationCount) {
-    const double currentTime = glfwGetTime();
-    const double deltaTime = currentTime - time;
-    time = currentTime;
-
-    if (enablePhysicsUpdate)
-    {
-      accH += deltaTime;
-      if (accH >= simulationStep) {
-        // update physics.
-        simulation.stepDelta(accH * simulationSpeed);
-        accH = 0.0;
-      }
-    }
+    const double time = glfwGetTime();
 
     glViewport(0, 0, m_nWindowWidth, m_nWindowHeight);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -564,7 +336,7 @@ int ViewerApplication::run()
           useTrackball = !useTrackball;
         }
       }
-      if (ImGui::CollapsingHeader("Lighting")) {
+      if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::RadioButton("Enable occlusions", useOcclusion)) {
           useOcclusion = !useOcclusion;
         }
@@ -612,138 +384,6 @@ int ViewerApplication::run()
             directionalLight.setDirection(euler.x, euler.y);
           }
 
-          ImGui::TreePop();
-        }
-      }
-      if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::RadioButton("Enable Physics", enablePhysicsUpdate)) {
-          enablePhysicsUpdate = !enablePhysicsUpdate;
-        }
-        auto step = static_cast<float>(simulationStep);
-        if (ImGui::SliderFloat("Simulation Step", &step, 0.f, 1.f)) {
-          simulationStep = step;
-        }
-        auto speed = static_cast<float>(simulationSpeed);
-        if (ImGui::SliderFloat("Simulation Speed", &speed, 0.f, 5.f)) {
-          simulationSpeed = speed;
-        }
-        if (ImGui::RadioButton("Reset Objects", false)) {
-            for (std::size_t y = 0; y < flagObjects.size(); ++y)
-            {
-              for (std::size_t x = 0; x < flagObjects.front().size(); ++x)
-              {
-                flagObjects.at(y).at(x)->setVelocity(Vector { });
-                flagObjects.at(y).at(x)->setPosition(flagPositions.at(y).at(x));
-              }
-            }
-        }
-
-        if (ImGui::TreeNode("Gravity"))
-        {
-          if (ImGui::RadioButton("Enabled", isGravityEnabled))
-          {
-            isGravityEnabled = !isGravityEnabled;
-            gravity->setEnabled(isGravityEnabled);
-          }
-          bool hasGravityChanged = false;
-          hasGravityChanged |= ImGui::SliderAngle("Theta", &gravityTheta ,-180.f, 180.f);
-          hasGravityChanged |= ImGui::SliderAngle("Phi",   &gravityPhi,-180.f, 180.f);
-
-          hasGravityChanged |= ImGui::SliderFloat("Strength", &gravityStrength, 0.f, 20.f);
-
-          if (hasGravityChanged) {
-            const glm::vec3 gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
-            gravity->setVector( gravityStrength
-                               * Vector { gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z });
-            const Vector pullVec = gravity->getVector() + windAmplitude;
-            // get projection onto up dir.
-            hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
-            setHoistStiffness(k, hoistPullFactor);
-          }
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Wind"))
-        {
-          if (ImGui::RadioButton("Enabled", isWindEnabled))
-          {
-            isWindEnabled = !isWindEnabled;
-            wind->setEnabled(isWindEnabled);
-          }
-          {
-            bool hasWindAmpChanged = false;
-            hasWindAmpChanged |= ImGui::SliderAngle("Amplitude Theta", &windAmpTheta ,-180.f, 180.f);
-            hasWindAmpChanged |= ImGui::SliderAngle("Amplitude Phi",   &windAmpPhi,-180.f, 180.f);
-
-            hasWindAmpChanged |= ImGui::SliderFloat("Amplitude", &windAmpStrength, 0.f, 20.f);
-
-            if (hasWindAmpChanged) {
-              const glm::vec3 windAmplitudeGlm = computeDirFromEuler(windAmpTheta, windAmpPhi);
-              windAmplitude = windAmpStrength
-                              * Vector { windAmplitudeGlm.x, windAmplitudeGlm.y, windAmplitudeGlm.z };
-              const Vector pullVec = gravity->getVector() + windAmplitude;
-              // get projection onto up dir.
-              hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
-              setHoistStiffness(k, hoistPullFactor);
-            }
-          }
-          {
-            bool hasWindFreqChanged = false;
-            hasWindFreqChanged |= ImGui::SliderAngle("Frequency Theta", &windFreqTheta ,-180.f, 180.f);
-            hasWindFreqChanged |= ImGui::SliderAngle("Frequency Phi",   &windFreqPhi,-180.f, 180.f);
-
-            hasWindFreqChanged |= ImGui::SliderFloat("Frequency", &windFreqStrength, 0.f, 100.f);
-
-            if (hasWindFreqChanged) {
-              const glm::vec3 windFrequencyGlm = computeDirFromEuler(windFreqTheta, windFreqPhi);
-              windFrequency = windFreqStrength
-                              * Vector { windFrequencyGlm.x, windFrequencyGlm.y, windFrequencyGlm.z };
-            }
-          }
-
-
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Collisions"))
-        {
-          if (ImGui::RadioButton("Enabled", areCollisionsEnabled))
-          {
-            areCollisionsEnabled = !areCollisionsEnabled;
-            simulation.setCollisionsEnabled(areCollisionsEnabled);
-          }
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Flag"))
-        {
-          bool hasFlagChanged = false;
-
-          hasFlagChanged |= ImGui::SliderFloat("Mass", &flagMass, 0.f, 100.f);
-          if (hasFlagChanged)
-          {
-            // do *not* set the mass of the hoist, these should stay static!
-            for (std::size_t y = 0; y < flagObjects.size(); ++y)
-            {
-              for (std::size_t x = 1; x < flagObjects.front().size(); ++x)
-              {
-                flagObjects.at(y).at(x)->setMass(flagMass);
-              }
-            }
-          }
-
-          bool haveSpringsChanged = false;
-
-          haveSpringsChanged |= ImGui::SliderFloat("k", &k, 0.f, 100.f);
-          haveSpringsChanged |= ImGui::SliderFloat("l0", &l0, 0.f, 20.f);
-          if (haveSpringsChanged) {
-            for (auto & spring : flagSprings)
-            {
-              spring->setStiffness(k);
-              spring->setRestLength(l0);
-            }
-            setHoistStiffness(k, hoistPullFactor);
-          }
           ImGui::TreePop();
         }
       }
