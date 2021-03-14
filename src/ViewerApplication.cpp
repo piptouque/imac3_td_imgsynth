@@ -11,6 +11,8 @@
 #include "utils/gltf.hpp"
 #include "utils/images.hpp"
 
+#include <misc/cpp/imgui_stdlib.h>
+
 #include <stb_image_write.h>
 
 // TD
@@ -38,7 +40,38 @@ static constexpr const char* OC_TEX_UNIFORM_NAME = "uOcclusionTexture";
 
 namespace {
 
-  const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
+bool loadGltfFile(const fs::path & path, tinygltf::Model & model) {
+  tinygltf::TinyGLTF loader;
+  std::string err, warn;
+  bool success;
+  const std::string filePath = path.string();
+  if (path.has_extension() && path.extension().string() == ".glb")
+  {
+    // Load as binary
+    success = loader.LoadBinaryFromFile(
+        &model, &err, &warn,
+        filePath);
+  }
+  else
+  {
+    // load as text.
+    success = loader.LoadASCIIFromFile(
+        &model, &err, &warn,
+        filePath);
+  }
+  if (!err.empty()) {
+    std::cerr << "Error while parsing GLTF file: " << err << std::endl;
+  }
+  if (!warn.empty()) {
+    std::cerr << "Warning while parsing GLTF file: " << warn << std::endl;
+  }
+  if (!success) {
+    std::cerr << "Failed to parse GLTF file at " << path << std::endl;
+  }
+  return success;
+}
+
+const tinygltf::Accessor & findAccessor(const tinygltf::Model & model, int accessorIdx) {
     return model.accessors.at(static_cast<std::size_t>(accessorIdx));
   }
 
@@ -73,10 +106,10 @@ namespace {
 int ViewerApplication::run()
 {
   // Loader shaders
-  auto pbrProgramme = std::make_shared<GLProgram>(
+  m_pbrProgramme = std::make_shared<GLProgram>(
       compileProgram({m_ShadersRootPath / m_vertexShader,
           m_ShadersRootPath / m_fragmentShader}));
-  auto boundMaterial = std::make_shared<tinygltf::Material>();
+  m_boundMaterial = std::make_shared<tinygltf::Material>();
 
   GLuint directionalLightBufferObject;
   // Directional SSBO stuff
@@ -84,7 +117,7 @@ int ViewerApplication::run()
     glGenBuffers(1, &directionalLightBufferObject);
 
     const GLuint lightStorageBlockIndex =
-        glGetProgramResourceIndex(pbrProgramme->glId(), GL_SHADER_STORAGE_BLOCK, DIRECTIONALLIGHT_STORAGE_BLOCK_NAME);
+        glGetProgramResourceIndex(m_pbrProgramme->glId(), GL_SHADER_STORAGE_BLOCK, DIRECTIONALLIGHT_STORAGE_BLOCK_NAME);
     assert(lightStorageBlockIndex != GL_INVALID_INDEX);
 
     // Alloc and binding
@@ -97,7 +130,7 @@ int ViewerApplication::run()
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // Linking to shader.
-    glShaderStorageBlockBinding(pbrProgramme->glId(), lightStorageBlockIndex,
+    glShaderStorageBlockBinding(m_pbrProgramme->glId(), lightStorageBlockIndex,
         DIRECTIONALLIGHT_STORAGE_BINDING);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DIRECTIONALLIGHT_STORAGE_BINDING,
         directionalLightBufferObject);
@@ -116,13 +149,13 @@ int ViewerApplication::run()
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     GLuint ambientBlockIndex = glGetUniformBlockIndex(
-        pbrProgramme->glId(),
-                                                       AMBIENTLIGHT_UNIFORM_BUFFER_NAME);
+        m_pbrProgramme->glId(),
+        AMBIENTLIGHT_UNIFORM_BUFFER_NAME);
 
     assert(ambientBlockIndex != GL_INVALID_INDEX);
 
     glUniformBlockBinding(
-        pbrProgramme->glId(), ambientBlockIndex, AMBIENTLIGHT_BLOCK_BINDING);
+        m_pbrProgramme->glId(), ambientBlockIndex, AMBIENTLIGHT_BLOCK_BINDING);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, AMBIENTLIGHT_BLOCK_BINDING, ambientLightBufferObject);
   }
@@ -142,30 +175,40 @@ int ViewerApplication::run()
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     GLuint materialBlockIndex = glGetUniformBlockIndex(
-        pbrProgramme->glId(),
-                                                       MATERIAL_UNIFORM_BUFFER_NAME);
+        m_pbrProgramme->glId(),
+        MATERIAL_UNIFORM_BUFFER_NAME);
 
     assert(materialBlockIndex != GL_INVALID_INDEX);
 
     glUniformBlockBinding(
-        pbrProgramme->glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
+        m_pbrProgramme->glId(), materialBlockIndex, MATERIAL_BLOCK_BINDING);
 
     glBindBufferBase(GL_UNIFORM_BUFFER, MATERIAL_BLOCK_BINDING, materialBufferObject);
   }
 
   // first load the models in order to set camera according to scene bounds.
-  std::vector<ObjectModel> objectModels;
-  objectModels.reserve(m_gltfFilePaths.size());
-  for (const auto & path : m_gltfFilePaths)
+  m_objectModels.reserve(m_gltfFilePaths.size());
+  for (std::size_t i = 0; i < m_gltfFilePaths.size(); ++i)
   {
-    objectModels.emplace_back(path, pbrProgramme, boundMaterial);
+    tinygltf::Model model;
+    bool success = loadGltfFile(m_gltfFilePaths.at(i), model);
+    if (success)
+    {
+      m_objectModels.emplace_back(model, m_pbrProgramme, m_boundMaterial);
+    }
+    else
+    {
+      m_gltfFilePaths.erase(m_gltfFilePaths.begin() + static_cast<long>(i));
+      --i;
+    }
   }
+  assert(!m_objectModels.empty());
   std::size_t currentObjectModelIdx = 0;
 
   // Build projection matrix
   glm::vec3 bboxMin, bboxMax;
   // todo: compute scene bounds from max of all model bounds.??
-  computeSceneBounds(objectModels.at(currentObjectModelIdx).getModel(), bboxMin, bboxMax);
+  computeSceneBounds(m_objectModels.at(currentObjectModelIdx).getModel(), bboxMin, bboxMax);
 
   const glm::vec3 diag = bboxMax - bboxMin;
 
@@ -210,7 +253,7 @@ int ViewerApplication::run()
   //
   // Setup OpenGL state for rendering
   glEnable(GL_DEPTH_TEST);
-  pbrProgramme->use();
+  m_pbrProgramme->use();
 
   // Lambda function to draw the scene
   const auto drawScene = [&](const Camera &camera) {
@@ -247,7 +290,7 @@ int ViewerApplication::run()
 
     // Flag objects
     glm::mat4 const rootModelMatrix = glm::identity<glm::mat4>();
-      objectModels.at(currentObjectModelIdx)
+      m_objectModels.at(currentObjectModelIdx)
           .draw(materialBufferObject, rootModelMatrix, viewMatrix, projMatrix,
               useOcclusion);
   };
@@ -383,8 +426,31 @@ int ViewerApplication::run()
           if (hasLightDirChanged) {
             directionalLight.setDirection(euler.x, euler.y);
           }
-
           ImGui::TreePop();
+        }
+      }
+      if (ImGui::CollapsingHeader("Scene")) {
+
+        ImGui::Text("Current model path: %s", m_gltfFilePaths.at(currentObjectModelIdx).c_str());
+
+        std::string inputPath;
+
+        // todo: InputText does not work.
+        if (ImGui::InputText("Load model path: ", &inputPath, ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+          tinygltf::Model model;
+          bool success = loadGltfFile(inputPath, model);
+          if (success)
+          {
+            m_objectModels.emplace_back(model, m_pbrProgramme, m_boundMaterial);
+            m_gltfFilePaths.emplace_back(inputPath);
+          }
+          inputPath.clear();
+        }
+
+        int modelIdx = static_cast<int>(currentObjectModelIdx);
+        if (ImGui::SliderInt("Model", &modelIdx, 0, static_cast<int>(m_objectModels.size()) - 1)) {
+          currentObjectModelIdx = static_cast<std::size_t>(modelIdx);
         }
       }
       ImGui::End();
@@ -451,11 +517,12 @@ ViewerApplication::ViewerApplication(
 
   printGLVersion();
 }
-ObjectModel::ObjectModel(const std::experimental::filesystem::path & modelPath,
+ObjectModel::ObjectModel(tinygltf::Model model,
                          std::shared_ptr<GLProgram> programme,
                          std::shared_ptr<tinygltf::Material> boundMaterial)
 {
-  loadGltfFile(modelPath, m_model);
+  m_model = std::move(model);
+
   m_textureObjects = createTextureObjects(m_model);
   m_bufferObjects = createBufferObjects(m_model);
   m_vertexArrayObjects = createVertexArrayObjects(
@@ -665,38 +732,6 @@ void ObjectModel::draw(GLuint materialBufferObject,
                     drawNode(nodeIdx, modelMatrix);
                   });
   }
-}
-
-bool ObjectModel::loadGltfFile(const std::experimental::filesystem::path & path,
-                               tinygltf::Model & model) {
-  tinygltf::TinyGLTF loader;
-  std::string err, warn;
-  bool success;
-  const std::string filePath = path.string();
-  if (path.has_extension() && path.extension().string() == ".glb")
-  {
-    // Load as binary
-    success = loader.LoadBinaryFromFile(
-        &model, &err, &warn,
-        filePath);
-  }
-  else
-  {
-    // load as text.
-    success = loader.LoadASCIIFromFile(
-        &model, &err, &warn,
-        filePath);
-  }
-  if (!err.empty()) {
-    std::cerr << "Error while parsing GLTF file: " << err << std::endl;
-  }
-  if (!warn.empty()) {
-    std::cerr << "Warning while parsing GLTF file: " << warn << std::endl;
-  }
-  if (!success) {
-    std::cerr << "Failed to parse GLTF file at " << path << std::endl;
-  }
-  return success;
 }
 
 std::vector<GLuint> ObjectModel::createBufferObjects(
@@ -918,3 +953,4 @@ std::vector<GLuint> ObjectModel::createTextureObjects(tinygltf::Model & model)
   }
   return textureObjects;
 }
+

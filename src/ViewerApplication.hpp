@@ -7,6 +7,8 @@
 
 #include <tiny_gltf.h>
 
+class ObjectModel;
+
 class ViewerApplication
 {
 public:
@@ -19,13 +21,13 @@ public:
 
 private:
 
-
   GLsizei m_nWindowWidth = 1280;
   GLsizei m_nWindowHeight = 720;
 
   const fs::path m_AppPath;
   const std::string m_AppName;
   const fs::path m_ShadersRootPath;
+
 
   std::vector<fs::path> m_gltfFilePaths;
   std::string m_vertexShader = "forward.vs.glsl";
@@ -50,7 +52,12 @@ private:
     OpenGL resources (e.g. GLProgram, GLShader) because it is responsible for
     the creation of a GLFW windows and thus a GL context which must exists
     before most of OpenGL function calls.
+    As such, m_objectModels and other objects using OpenGL data
+    must be declared after it.
   */
+  std::vector<ObjectModel> m_objectModels;
+  std::shared_ptr<GLProgram> m_pbrProgramme;
+  std::shared_ptr<tinygltf::Material> m_boundMaterial;
 };
 
 // TD
@@ -58,10 +65,10 @@ class ObjectModel
 {
 public:
   /** -- methods -- **/
-  explicit ObjectModel(const fs::path & modelPath,
+  ObjectModel(tinygltf::Model model,
       std::shared_ptr<GLProgram> programme,
       std::shared_ptr<tinygltf::Material> boundMaterial);
-  virtual ~ObjectModel();
+  ~ObjectModel();
 
   [[nodiscard]] inline const tinygltf::Model & getModel() const { return m_model; };
 
@@ -80,13 +87,6 @@ private:
   };
 
   void bindMaterial(GLuint materialBufferObject, int materialIdx, bool useOcclusion) const;
-
-  ///
-  /// \param model
-  /// \return Success
-  static bool loadGltfFile(const fs::path & path,
-                           tinygltf::Model & model);
-  ///
 
   /// \param model
   /// \return
@@ -109,7 +109,7 @@ private:
   std::vector<GLuint> m_textureObjects;
   std::vector<GLuint> m_bufferObjects;
   std::vector<VaoRange> m_meshIndexToVaoRange;
-  std::vector<GLuint> m_vertexArrayObjects ;
+  std::vector<GLuint> m_vertexArrayObjects;
 
   GLint m_baseTextureLocation;
   GLint m_metallicRoughnessTextureLocation;

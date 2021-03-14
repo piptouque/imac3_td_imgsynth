@@ -66,6 +66,7 @@ set(
     third-party/${IMGUI_DIR}/imgui_demo.cpp
     third-party/${IMGUI_DIR}/imgui_draw.cpp
     third-party/${IMGUI_DIR}/imgui_widgets.cpp
+    third-party/${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
     third-party/${IMGUI_DIR}/examples/imgui_impl_opengl3.cpp
     third-party/${IMGUI_DIR}/examples/imgui_impl_glfw.cpp
 )
