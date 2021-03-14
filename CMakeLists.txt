@@ -92,7 +92,6 @@ set(
     LIBRARIES
     ${OPENGL_LIBRARIES}
     glfw
-    c3ga
 )
 
 if (GLTF_VIEWER_USE_BOOST_FILESYSTEM)
