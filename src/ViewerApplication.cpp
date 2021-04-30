@@ -209,7 +209,12 @@ int ViewerApplication::run()
     const auto gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
     gravity = std::make_shared<Gravity>(
         Vector({ gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z })
-        * gravityStrength);
+        * gravityStrength,
+        []([[maybe_unused]] auto const & obj) {
+          auto const amp =  1.0 / obj->getInverseMass();
+          return amp;
+        }
+        );
     gravity->setEnabled(isGravityEnabled);
   }
   simulation.addForceField(gravity);
@@ -251,8 +256,8 @@ int ViewerApplication::run()
   // the objects used in the flag simulation.
   float flagMass = 1.0;
   float flagRadius = 1.0;
-  std::size_t numberFlagColumns = 5;
-  std::size_t numberFlagRows = 5;
+  std::size_t numberFlagColumns = 10;
+  std::size_t numberFlagRows = 10;
   // row-major.
   std::vector<std::vector<std::shared_ptr<Rigidbody>>> flagObjects;
   std::vector<std::vector<Position>> flagPositions;
@@ -655,7 +660,7 @@ int ViewerApplication::run()
             const glm::vec3 gravityDirGlm = computeDirFromEuler(gravityTheta, gravityPhi);
             gravity->setVector( gravityStrength
                                * Vector { gravityDirGlm.x, gravityDirGlm.y, gravityDirGlm.z });
-            const Vector pullVec = gravity->getVector() + windAmplitude;
+            const Vector pullVec = gravity->getVector() * flagMass + windAmplitude;
             // get projection onto up dir.
             hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
             setHoistStiffness(k, hoistPullFactor);
@@ -681,7 +686,7 @@ int ViewerApplication::run()
               const glm::vec3 windAmplitudeGlm = computeDirFromEuler(windAmpTheta, windAmpPhi);
               windAmplitude = windAmpStrength
                               * Vector { windAmplitudeGlm.x, windAmplitudeGlm.y, windAmplitudeGlm.z };
-              const Vector pullVec = gravity->getVector() + windAmplitude;
+              const Vector pullVec = gravity->getVector() * flagMass + windAmplitude;
               // get projection onto up dir.
               hoistPullFactor = pullVec.dot(Vector { 0.0, 1.0, 0.0 });
               setHoistStiffness(k, hoistPullFactor);
