@@ -3,6 +3,8 @@
 
 # sample directory
 samples/
+!samples/DamagedHelmet/
+!samples/Sphere/
 # build directory
 build/
 
