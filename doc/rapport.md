@@ -32,25 +32,24 @@ les particules composant le drapeau sont représentées par des sphères, et peu
 ![capture_1](./res/day.png)
 ![capture_2](./res/night.png)
 
+### Compilation
+
+Depuis la racine du projet :
+
+    git checkout -b dev_physics origin/dev_physics
+    git checkout dev_physics
+    mkdir build
+    cd build
+    cmake ..
+    make  
+
 ### Exécution
 
 Depuis la racine du projet :
 
-    git checkout dev_physics
 
     build/bin/gltf-viewer viewer samples/Sphere/glTF/Sphere.gltf
 
 ou bien:
 
     build/bin/gltf-viewer viewer samples/DamagedHelmet/glTF/DamagedHelmet.gltf
-
-
-### Compilation
-
-Depuis la racine du projet :
-
-    git checkout dev_physics
-    mkdir build
-    cd build
-    cmake ..
-    make  
